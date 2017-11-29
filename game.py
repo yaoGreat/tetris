@@ -28,7 +28,6 @@ class Tetris:
 	__gameover = False
 
 	__dbginfo = ""
-	__train_model = None
 
 	def width(self):
 		return self.__width
@@ -89,37 +88,35 @@ class Tetris:
 		newR = (self.__curR + 1) % len(group_table[self.__curIdx])
 		if not self.__test_collision(self.__gen_shape(self.__curIdx, self.__curVal, self.__curX, self.__curY, newR)):
 			self.__curR = newR
-			return
+			return True
 		if not self.__test_collision(self.__gen_shape(self.__curIdx, self.__curVal, self.__curX + 1, self.__curY, newR)):
 			self.__curR = newR
 			self.__curX += 1
-			return
+			return True
 		if not self.__test_collision(self.__gen_shape(self.__curIdx, self.__curVal, self.__curX - 1, self.__curY, newR)):
 			self.__curR = newR
 			self.__curX -= 1
-			return
+			return True
 		if not self.__test_collision(self.__gen_shape(self.__curIdx, self.__curVal, self.__curX + 2, self.__curY, newR)):
 			self.__curR = newR
 			self.__curX += 2
-			return
+			return True
 		if not self.__test_collision(self.__gen_shape(self.__curIdx, self.__curVal, self.__curX - 2, self.__curY, newR)):
 			self.__curR = newR
 			self.__curX -= 2
-			return
+			return True
+		return False
 
 	def fast_finish(self):
 		step = self.__step
 		while self.__step == step:
 			self.move_current(y = 1)
 
-	def set_train_mode(self, model):
-		__train_model = model
-
 	def move_step_by_ai(self, x, rotate):
 		l = len(group_table[self.__curIdx])
 		if self.__curR % l != rotate % l:
-			self.rotate_current()
-			return False
+			if self.rotate_current():
+				return False
 
 		oldX = self.__curX
 		if self.__curX > x:
@@ -133,7 +130,7 @@ class Tetris:
 		return True
 
 	def reset(self):
-		print("init tetris")
+		#print("init tetris")
 		self.__tiles = [[ 0 for x in range(self.__width) ] for y in range(self.__height)]
 		self.__curIdx = 0
 		self.__curVal = 0
@@ -146,7 +143,6 @@ class Tetris:
 		self.__step = 0
 		self.__gameover = False
 		self.__dbginfo = ""
-		self.__train_model = None
 		
 		self.__gen_next()
 		self.__pop_next()
@@ -196,9 +192,6 @@ class Tetris:
 				self.__clear_row(row)
 				row_cnt += 1
 		self.__score += score_table[row_cnt]
-
-		if self.__train_model != None:
-			self.__train_model.do_train(self)
 
 	def __is_full_row(self, row):
 		for x in range(self.__width):

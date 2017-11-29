@@ -1,4 +1,6 @@
 import curses
+import sys
+import getopt
 from game import Tetris
 
 key_up = 65
@@ -14,14 +16,15 @@ class TetrisUI:
 	__tetris = None
 	__scr = None
 	__lastkey = 0
+	__train_info = None
 
-	def __init__(self, tetris):
+	def __init__(self, tetris, frame_interval = 500):
 		print("init tetris gui")
 		self.__tetris = tetris
 		self.__scr = curses.initscr()
 		curses.noecho()
 		curses.cbreak()
-		self.__scr.timeout(500)
+		self.__scr.timeout(frame_interval)
 
 	def __del__(self):
 		self.__tetris = None
@@ -59,8 +62,10 @@ class TetrisUI:
 		self.__drawcontent(info_x, info_y + 2, "Step: %d" % self.__tetris.step())
 		self.__drawcontent(info_x, info_y + 3, "LastKey: %d" % self.__lastkey)
 		self.__drawcontent(info_x, info_y + 4, "Dbg: %s" % self.__tetris.dbginfo())
+		if self.__train_info != None:
+			self.__drawcontent(info_x, info_y + 5, self.__train_info)
 		if self.__tetris.gameover():
-			self.__drawcontent(info_x, info_y + 5, "GAME OVER")
+			self.__drawcontent(info_x, info_y + 6, "GAME OVER")
 
 
 	def __drawtile(self, x, y, v, baseX = 0, baseY = 0):
@@ -115,22 +120,39 @@ class TetrisUI:
 			
 			if c > 0:
 				self.__lastkey = c
+
+	def refresh_and_check_quit(self):
+		self.__refresh()
+		c = self.__scr.getch()
+		return c == ord('q')
+
+	def show_train_info(self, info):
+		self.__train_info = info
 			
 import model_0 as model
 
-def play_train():
+def play():
 	game = Tetris()
-	model.init_train()
-	game.set_train_mode(model)
 	ui = TetrisUI(game)
 	ui.loop()
 	del ui
-	model.save_train()
+	del game
+
+def play_train(with_ui = False):
+	model.init_model()
+	game = Tetris()
+	ui = None
+	if with_ui:
+		ui = TetrisUI(game, 100)
+	model.train(game, ui = ui)
+	model.save_model()
+	if ui != None:
+		del ui
 	del game
 
 def play_ai():
 	game = Tetris()
-	model.init_train()
+	model.init_model()
 	ui = TetrisUI(game)
 	err = None
 	try:
@@ -142,14 +164,21 @@ def play_ai():
 	if err != None:
 		print(err)
 
-def play_ai_without_ui():
-	game = Tetris()
-	model.init_train()
-	while not game.gameover():
-		model.run_game(game)
-	del game
-
 if __name__ == '__main__':
-	play_train()
-	# play_ai()
-	# play_ai_without_ui()
+	mode = "play"
+	train_with_ui = False
+	opts, _ = getopt.getopt(sys.argv[1:], "tau")
+	for op, value in opts:
+		if op == "-t":
+			mode = "train"
+		elif op == "-a":
+			mode = "ai"
+		elif op == "-u":
+			train_with_ui = True
+
+	if mode == "play":
+		play()
+	elif mode == "train":
+		play_train(train_with_ui)
+	elif mode == "ai":
+		play_ai()
