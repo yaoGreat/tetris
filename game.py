@@ -25,6 +25,7 @@ class Tetris:
 	__nextVal = 0
 	__score = 0
 	__step = 0
+	__last_earse_row = 0
 	__gameover = False
 
 	__dbginfo = ""
@@ -64,6 +65,9 @@ class Tetris:
 
 	def step(self):
 		return self.__step
+
+	def last_erase_row(self):
+		return self.__last_earse_row
 
 	def gameover(self):
 		return self.__gameover
@@ -141,6 +145,7 @@ class Tetris:
 		self.__nextVal = 0
 		self.__score = 0
 		self.__step = 0
+		self.__last_earse_row = 0
 		self.__gameover = False
 		self.__dbginfo = ""
 		
@@ -192,6 +197,7 @@ class Tetris:
 				self.__clear_row(row)
 				row_cnt += 1
 		self.__score += score_table[row_cnt]
+		self.__last_earse_row = row_cnt
 
 	def __is_full_row(self, row):
 		for x in range(self.__width):

@@ -30,12 +30,9 @@ def create_model():
 		#input
 		_tiles = tf.placeholder(tf.float32, [None, 20, 10], name="tiles")
 		_current = tf.placeholder(tf.float32, [None, 2], name="current") # idx, next_idx
-		_action = tf.placeholder(tf.float32, [None, 4 * 10], name="action") # x * 4 + rotate
-		_target = tf.placeholder(tf.float32, [None], name="target") # reward + gamma * max(Q_sa)
 		keep_prob = tf.placeholder(tf.float32, name="kp")
 		print("_tiles", _tiles)
 		print("_current", _current)
-		print("_action", _action)
 
 		#layer 1
 		_tiles_reshape = tf.reshape(_tiles, [-1, 20, 10, 1])
@@ -61,26 +58,18 @@ def create_model():
 		#layer fc2 x * 4 + r
 		W_fc2_xr = weight_variable([1024, 40])
 		b_fc2_xr = bias_variable([40])
-		xr_conv = tf.nn.softmax(tf.matmul(h_fc1_drop, W_fc2_xr) + b_fc2_xr, name="argmax_xr")
-		print("xr_conv", xr_conv)
-
-		#output
-		output = tf.argmax(xr_conv, 1, name="output")
+		output = tf.nn.softmax(tf.matmul(h_fc1_drop, W_fc2_xr) + b_fc2_xr, name="output")	# this is the Q of each action
 		print("output", output)
-
-		#train
-		action = tf.reduce_sum(tf.multiply(xr_conv, _action), reduction_indices = 1)
-		cost = tf.reduce_mean(tf.square(action - _target), name="cost")
-		optimizer = tf.train.AdamOptimizer(1e-6).minimize(cost, name="train_op")
-		print("optimizer", optimizer)
 
 	return model
 
-def init_model():
+def init_model(train = False):
 	global model
 	global sess
 	global saver
 	model = create_model()
+	if train:
+		create_train_op(model)
 	sess = tf.InteractiveSession(graph = model)
 	saver = tf.train.Saver(max_to_keep = 1)
 	cp = tf.train.latest_checkpoint('model_0/')
@@ -108,8 +97,9 @@ def run_game(tetris):
 		current = [[tetris.current_index(), tetris.next_index()]]
 		kp = 1
 		output = model.get_tensor_by_name("output:0")
-		__cur_output = output.eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+		__cur_output_xr = output.eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
 		__cur_step = tetris.step()
+		__cur_output = np.argmax(__cur_output_xr)
 		print("step %d, output: %d, x: %d, r: %d" % (__cur_step, __cur_output, int(__cur_output / 4), int(__cur_output % 4)))
 	
 	x = int(__cur_output / 4)
@@ -117,11 +107,27 @@ def run_game(tetris):
 	if tetris.move_step_by_ai(x, r):
 		tetris.fast_finish()
 
+
+def create_train_op(model):
+	with model.as_default():
+		#train input
+		_action = tf.placeholder(tf.float32, [None, 40], name="action")
+		_targetQ = tf.placeholder(tf.float32, [None], name="targetQ") # reward + gamma * max(Q_sa)
+
+		#train
+		output = model.get_tensor_by_name("output:0")
+		Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1)	# take the weight of _action in output as Q
+		cost = tf.reduce_mean(tf.square(Q - _targetQ), name="cost")
+		optimizer = tf.train.AdamOptimizer(1e-6).minimize(cost, name="train_op")
+		print("optimizer", optimizer)
+
+	return model
+
 def train(tetris
-	, memory_size = 1000
-	, batch_size = 50
-	, train_steps = 10000
-	, gamma = 0.95
+	, memory_size = 10000
+	, batch_size = 100
+	, train_steps = 100000
+	, gamma = 0.8
 	, init_epsilon = 1
 	, min_epsilon = 0.01
 	, ui = None):
@@ -135,44 +141,49 @@ def train(tetris
 	status_0 = train_make_status(tetris)
 	while True:
 		#run game
-		action_0 = None # judge action, random or from model
+		action_0 = [0] * 40 # judge action, random or from model, this action vector must be onehot
 		if random.random() < epsilon:
-			action_0 = [0] * 40
 			action_0[random.randrange(40)] = 1
 		else:
-			action_0 = train_cal_action([status_0], model)[0]
+			idx = np.argmax(train_cal_action_weight([status_0], model)[0])
+			action_0[idx] = 1
 		epsilon = init_epsilon + (min_epsilon - init_epsilon) * step / train_steps
 
-		reward_1 = train_run_game(tetris, action_0, ui)  #use the action to run, then get reward
-		gameover_1 = 0
+		train_run_game(tetris, action_0, ui)  #use the action to run, then get reward
+		gameover = False
 		if tetris.gameover():
 			tetris.reset()
-			gameover_1 = 1
+			gameover = True
 		status_1 = train_make_status(tetris)
-
+		
 		#log to memory
-		D.append((status_0, action_0, reward_1, status_1, gameover_1))
-		if len(D) > memory_size:
-			D.popleft()
+		if not gameover:
+			reward_1 = train_cal_reward(status_0, status_1)
+			D.append((status_0, action_0, reward_1, status_1))
+			if len(D) > memory_size:
+				D.popleft()
 
 		#review memory
-		if step > batch_size:
+		if len(D) > batch_size:
 			batch = random.sample(D, batch_size)
 			status_0_batch = [d[0] for d in batch]
 			action_0_batch = [d[1] for d in batch]
 			reward_1_batch = [d[2] for d in batch]
 			status_1_batch = [d[3] for d in batch]
-			gameover_1_batch = [d[4] for d in batch]
 
-			action_1_batch = train_cal_action(status_1_batch, model)
-			target_batch = []
+			action_1_batch = train_cal_action_weight(status_1_batch, model)
+			Q_1_batch = action_1_batch	#action_1 == Q_i+1
+			targetQ_batch = []
 			for i in range(len(batch)):
-				if gameover_1_batch[i] == 1:
-					target_batch.append(reward_1_batch[i])
-				else:
-					target_batch.append(reward_1_batch[i] + gamma * np.max(action_1_batch[i]))
+				targetQ_batch.append(reward_1_batch[i] + gamma * np.max(Q_1_batch[i]))
 
-			last_cost = train_run_train_op(status_0_batch, action_0_batch, target_batch, model)
+			tiles = [status["tiles"] for status in status_0_batch]
+			current = [status["current"] for status in status_0_batch]
+			kp = 1
+			train_op = model.get_operation_by_name("train_op")
+			cost = model.get_tensor_by_name("cost:0")
+			_, last_cost = sess.run((train_op, cost),
+				feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
 
 		#loop
 		status_0 = status_1
@@ -191,35 +202,22 @@ def train(tetris
 def train_make_status(tetris):	# 0, tiles; 1, current
 	tiles = copy.deepcopy(tetris.tiles())
 	current = [tetris.current_index(), tetris.next_index()]
-	status = {"tiles":tiles, "current":current}
+	score = tetris.score()
+	status = {"tiles":tiles, "current":current, "score":score}
 	return status
 
-def train_cal_action(status_s, use_model):
+def train_cal_action_weight(status_s, use_model):
 	global sess
 	tiles = [status["tiles"] for status in status_s]
 	current = [status["current"] for status in status_s]
 	kp = 1
-	argmax_xr = use_model.get_tensor_by_name("argmax_xr:0").eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
-	argmax = [np.argmax(x) for x in argmax_xr]
-	action = np.eye(40)[argmax]
-	return action
-
-def train_run_train_op(status_s, action_s, target_s, use_model):
-	global sess
-	tiles = [status["tiles"] for status in status_s]
-	current = [status["current"] for status in status_s]
-	kp = 1
-	train_op = model.get_operation_by_name("train_op")
-	cost = model.get_tensor_by_name("cost:0")
-	_, cost_val = sess.run((train_op, cost), feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp, "action:0":action_s, "target:0":target_s})
-	return cost_val
+	argmax_xr = use_model.get_tensor_by_name("output:0").eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+	return argmax_xr
 
 def train_run_game(tetris, action, ui):
 	xr = np.argmax(action)
 	x = int(xr / 4)
 	r = int(xr % 4)
-
-	old_scores = train_cal_scores(tetris)
 
 	while True:
 		r = tetris.move_step_by_ai(x, r)
@@ -232,15 +230,11 @@ def train_run_game(tetris, action, ui):
 			tetris.fast_finish()
 			break
 
-	new_scores = train_cal_scores(tetris)
-	reward = train_cal_reward(old_scores, new_scores)
-	return reward
-
-def train_cal_scores(tetris):
+def train_get_row_info(status):
 	row_cnt = 0
 	total_fill = 0
 
-	tiles = tetris.tiles()
+	tiles = status["tiles"]
 	for row in tiles:
 		row_fill = 0
 		for t in row:
@@ -252,35 +246,18 @@ def train_cal_scores(tetris):
 
 	fill_rate = 0
 	if row_cnt > 0:
-		fill_rate = float(total_fill) / float(row_cnt * tetris.width())
+		fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
 
-	gameover = 0
-	if tetris.gameover():
-		gameover = 1
-	return {"score":tetris.score(), "row_cnt":row_cnt, "fill_rate":fill_rate, "gameover":gameover}
+	return row_cnt, row_fill
 
-reward_weight_score = 1
-reward_weight_row_inc = -0.5
-reward_weight_fill_rate = 1
-normal_row_inc = 1
-def train_cal_reward(old_scores, new_scores):
-	if new_scores["gameover"] == 1:
-		return -1
-
-	score_inc = new_scores["score"] - old_scores["score"]
-	row_inc = new_scores["row_cnt"] - old_scores["row_cnt"]
-	fill_inc = new_scores["fill_rate"] - old_scores["fill_rate"]
-
+def train_cal_reward(status_0, status_1):
+	score_inc = status_1["score"] - status_0["score"]
 	if score_inc > 0:
-		return 1
+		return score_inc
 
-	if row_inc < 1:
-		return 1
-	elif row_inc == 1:
-		return 0
-	else:
-		return -1
-	#return score_inc * reward_weight_score + (row_inc - normal_row_inc) * reward_weight_row_inc + fill_inc * reward_weight_fill_rate
+	row_cnt_0, row_fill_0 = train_get_row_info(status_0)
+	row_cnt_1, row_fill_1 = train_get_row_info(status_1)
+	return row_cnt_0 - row_cnt_1
 
 if __name__ == '__main__':
 	init_model()

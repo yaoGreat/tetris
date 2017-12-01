@@ -17,6 +17,7 @@ class TetrisUI:
 	__scr = None
 	__lastkey = 0
 	__train_info = None
+	__infoview_y = 0
 
 	def __init__(self, tetris, frame_interval = 500):
 		print("init tetris gui")
@@ -57,15 +58,17 @@ class TetrisUI:
 		for t in _next:
 			self.__drawtile(t[0], t[1], t[2], baseX = info_x)
 
-		self.__drawcontent(info_x, info_y, "INFO")
-		self.__drawcontent(info_x, info_y + 1, "Score: %d" % self.__tetris.score())
-		self.__drawcontent(info_x, info_y + 2, "Step: %d" % self.__tetris.step())
-		self.__drawcontent(info_x, info_y + 3, "LastKey: %d" % self.__lastkey)
-		self.__drawcontent(info_x, info_y + 4, "Dbg: %s" % self.__tetris.dbginfo())
+		self.__reset_infoview()
+		self.__drawinfoview("INFO")
+		self.__drawinfoview("Score: %d" % self.__tetris.score())
+		self.__drawinfoview("Step: %d" % self.__tetris.step())
+		self.__drawinfoview("LastErase: %d" % self.__tetris.last_erase_row())
+		self.__drawinfoview("LastKey: %d" % self.__lastkey)
+		self.__drawinfoview("Dbg: %s" % self.__tetris.dbginfo())
 		if self.__train_info != None:
-			self.__drawcontent(info_x, info_y + 5, self.__train_info)
+			self.__drawinfoview(self.__train_info)
 		if self.__tetris.gameover():
-			self.__drawcontent(info_x, info_y + 6, "GAME OVER")
+			self.__drawinfoview("GAME OVER")
 
 
 	def __drawtile(self, x, y, v, baseX = 0, baseY = 0):
@@ -80,6 +83,15 @@ class TetrisUI:
 
 	def __drawcontent(self, x, y, s):
 		self.__scr.addstr(y, x, s)
+
+	def __reset_infoview(self):
+		self.__infoview_y = self.__baseY + 8
+
+	def __drawinfoview(self, s):
+		info_x = (self.__tetris.width() + 3) * self.__tileWidth
+		info_y = self.__infoview_y
+		self.__drawcontent(info_x, info_y, s)
+		self.__infoview_y += 1
 
 	def loop(self, ai_model = None):
 		while True:
@@ -139,7 +151,7 @@ def play():
 	del game
 
 def play_train(with_ui = False):
-	model.init_model()
+	model.init_model(True)
 	game = Tetris()
 	ui = None
 	if with_ui:
