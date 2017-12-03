@@ -1,7 +1,9 @@
+#!/usr/local/bin/python2
 import curses
 import sys
 import getopt
 from game import Tetris
+from collections import deque
 
 key_up = 65
 key_down = 66
@@ -18,10 +20,12 @@ class TetrisUI:
 	__lastkey = 0
 	__train_info = None
 	__infoview_y = 0
+	__log_info = None
 
 	def __init__(self, tetris, frame_interval = 500):
 		print("init tetris gui")
 		self.__tetris = tetris
+		self.__log_info = deque()
 		self.__scr = curses.initscr()
 		curses.noecho()
 		curses.cbreak()
@@ -70,6 +74,8 @@ class TetrisUI:
 		if self.__tetris.gameover():
 			self.__drawinfoview("GAME OVER")
 
+		self.__drawlogview()
+
 
 	def __drawtile(self, x, y, v, baseX = 0, baseY = 0):
 		ch = '.'
@@ -92,6 +98,13 @@ class TetrisUI:
 		info_y = self.__infoview_y
 		self.__drawcontent(info_x, info_y, s)
 		self.__infoview_y += 1
+
+	def __drawlogview(self):
+		info_x = (self.__tetris.width() + 3) * self.__tileWidth + 25
+		info_y = self.__baseY
+		for info in self.__log_info:
+			self.__drawcontent(info_x, info_y, info)
+			info_y += 1
 
 	def loop(self, ai_model = None):
 		while True:
@@ -138,8 +151,10 @@ class TetrisUI:
 		c = self.__scr.getch()
 		return c == ord('q')
 
-	def show_train_info(self, info):
-		self.__train_info = info
+	def log(self, info):
+		self.__log_info.append(info)
+		if len(self.__log_info) > 30:
+			self.__log_info.popleft()
 			
 import model_0 as model
 
@@ -150,13 +165,16 @@ def play():
 	del ui
 	del game
 
-def play_train(with_ui = False):
-	model.init_model(True)
+def play_train(with_ui = False, force_init = False):
+	model.init_model(train = True, forceinit = force_init)
 	game = Tetris()
 	ui = None
 	if with_ui:
-		ui = TetrisUI(game, 100)
-	model.train(game, ui = ui)
+		ui = TetrisUI(game, 1000)
+	try:
+		model.train(game, ui = ui)
+	except KeyboardInterrupt:
+		print("user exit")
 	model.save_model()
 	if ui != None:
 		del ui
@@ -166,20 +184,18 @@ def play_ai():
 	game = Tetris()
 	model.init_model()
 	ui = TetrisUI(game)
-	err = None
 	try:
 		ui.loop(ai_model = model)
-	except Exception:
-		err = "Exception"
+	except KeyboardInterrupt:
+		print("user exit")
 	del ui
 	del game
-	if err != None:
-		print(err)
 
 if __name__ == '__main__':
 	mode = "play"
 	train_with_ui = False
-	opts, _ = getopt.getopt(sys.argv[1:], "tau")
+	train_force_init = False
+	opts, _ = getopt.getopt(sys.argv[1:], "taun")
 	for op, value in opts:
 		if op == "-t":
 			mode = "train"
@@ -187,10 +203,12 @@ if __name__ == '__main__':
 			mode = "ai"
 		elif op == "-u":
 			train_with_ui = True
+		elif op == "-n":
+			train_force_init = True
 
 	if mode == "play":
 		play()
 	elif mode == "train":
-		play_train(train_with_ui)
+		play_train(train_with_ui, train_force_init)
 	elif mode == "ai":
 		play_ai()
