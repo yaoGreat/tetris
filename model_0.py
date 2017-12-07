@@ -1,6 +1,7 @@
 ﻿import tensorflow as tf
 import numpy as np
 from collections import deque
+from time import sleep
 import random
 import copy
 from game import Tetris
@@ -13,6 +14,11 @@ from play import TetrisUI
 
 # 发现了一个问题，模型计算出来的权值，都nan了，貌似是卷积加全连接之后，结果太大。怎么解决还需要考虑，是变量初始值的问题，还是什么
 # 也许需要通过输出，找到再网络的哪一层出现nan。现在看来，距离调整算法还有段距离呢，先把模型的bug调好
+
+# 经过调试，发现随着训练步骤增加，Q值会越来越大。貌似，某一个action的Q值随着训练变大之后，后续所有计算的Q值都会随着增大，这导致了一个正反馈放大效应，结果就是inf
+# 貌似应该修改一下模型，增加一个层吧。另外，两个sess是否应该加一下了？现在每次训练之后都会更新target，也许会导致正反馈效应
+
+# 模型已经加层了，一个卷积层，一个全连接层，但是数值还是会inf，所有，考虑一下多个sess吧
 
 model = None
 sess = None
@@ -29,8 +35,8 @@ def bias_variable(shape):
 def conv2d(x, W):
 	return tf.nn.conv2d(x, W, strides=[1,1,1,1], padding='SAME')
 
-def max_pool_2x2(x):
-	return tf.nn.max_pool(x, ksize=[1,2,2,1], strides=[1,2,2,1], padding='SAME')
+def max_pool_2x2(x, name):
+	return tf.nn.max_pool(x, ksize=[1,2,2,1], strides=[1,2,2,1], padding='SAME', name=name)
 
 def create_model():
 	model = tf.Graph()
@@ -47,29 +53,41 @@ def create_model():
 		W_conv1 = weight_variable([5,5,1,32])
 		b_conv1 = bias_variable([32])
 		h_conv1 = tf.nn.relu(conv2d(_tiles_reshape, W_conv1) + b_conv1)
-		h_pool1 = max_pool_2x2(h_conv1)
+		h_pool1 = max_pool_2x2(h_conv1, name="h_pool1")
 		print("h_pool1", h_pool1)
 
+		#layer 2
+		W_conv2 = weight_variable([3,3,32,64])
+		b_conv2 = bias_variable([64])
+		h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
+		h_conv2 = max_pool_2x2(h_conv2, name="h_pool2")
+		print("h_conv2", h_conv2) # 5*3
+
 		#layer fc1
-		W_fc1 = weight_variable([10 * 5 * 32 + 2, 1024])
+		W_fc1 = weight_variable([5 * 3 * 64 + 2, 1024])
 		b_fc1 = bias_variable([1024])
-		h_pool_flat = tf.reshape(h_pool1, [-1, 10 * 5 * 32])
+		h_pool_flat = tf.reshape(h_conv2, [-1, 5 * 3 * 64])
 		h_fc1_input = tf.concat([h_pool_flat, _current], 1)
 		h_fc1 = tf.nn.relu(tf.matmul(h_fc1_input, W_fc1) + b_fc1)
 		print("h_fc1_input", h_fc1_input)
 		print("h_fc1", h_fc1)
 
-		#drop out
-		h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
-		print("h_fc1_drop", h_fc1_drop)
+		#layer fc2
+		W_fc2 = weight_variable([1024,256])
+		b_fc2 = bias_variable([256])
+		h_fc2 = tf.nn.relu(tf.matmul(h_fc1, W_fc2) + b_fc2)
 
-		#layer fc2 x * 4 + r
-		W_fc2_xr = weight_variable([1024, 40])
-		b_fc2_xr = bias_variable([40])
+		#drop out
+		h_drop = tf.nn.dropout(h_fc2, keep_prob)
+		print("h_drop", h_drop)
+
+		#layer out x * 4 + r
+		W_out_xr = weight_variable([256, 40])
+		b_out_xr = bias_variable([40])
 
 		# 这里如果使用softmax，那么最大值永远不会超过1，也就失去Q值得含义了
 		#output = tf.nn.softmax(tf.matmul(h_fc1_drop, W_fc2_xr) + b_fc2_xr, name="output")	# this is the Q of each action
-		output = tf.add(tf.matmul(h_fc1_drop, W_fc2_xr), b_fc2_xr, name="output")	# this is the Q of each action
+		output = tf.add(tf.matmul(h_drop, W_out_xr), b_out_xr, name="output")	# this is the Q of each action
 		print("output", output)
 
 	return model
@@ -125,13 +143,11 @@ def create_train_op(model):
 		#train input
 		_action = tf.placeholder(tf.float32, [None, 40], name="action")
 		_targetQ = tf.placeholder(tf.float32, [None], name="targetQ") # reward + gamma * max(Q_sa)
-		_learningRate = tf.placeholder(tf.float32, name="learningRate")
 
 		#train
 		output = model.get_tensor_by_name("output:0")
-		Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1)	# take the weight of _action in output as Q
-		iterQ = Q + _learningRate * (_targetQ - Q)
-		cost = tf.reduce_mean(tf.square(Q - iterQ), name="cost")
+		Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+		cost = tf.reduce_mean(tf.square(Q - _targetQ), name="cost")
 		optimizer = tf.train.GradientDescentOptimizer(0.5).minimize(cost, name="train_op")
 		print("optimizer", optimizer)
 
@@ -139,13 +155,12 @@ def create_train_op(model):
 
 def train(tetris
 	, memory_size = 1000
-	, batch_size = 1
+	, batch_size = 1 #50
 	, train_steps = 10000
 	, gamma = 0.8
 	, init_epsilon = 1
 	, min_epsilon = 0.01
-	, learningRate_numerator = 100000
-	, learningRate_denominator = 100000
+	, savePerStep = 1 #100
 	, ui = None):
 	global model
 	global sess
@@ -153,7 +168,6 @@ def train(tetris
 
 	epsilon = init_epsilon
 	step = 0
-	last_cost = 0
 	status_0 = train_make_status(tetris)
 	while True:
 		#run game
@@ -164,7 +178,6 @@ def train(tetris
 			idx = np.argmax(train_cal_action_weight([status_0], model)[0])
 			action_0[idx] = 1
 		epsilon = init_epsilon + (min_epsilon - init_epsilon) * step / train_steps
-		learningRate = float(learningRate_numerator) / float(learningRate_denominator + step)
 
 		gameover = train_run_game(tetris, action_0, ui)  #use the action to run, then get reward
 		status_1 = train_make_status(tetris)
@@ -201,17 +214,21 @@ def train(tetris
 			current = [status["current"] for status in status_0_batch]
 			kp = 1
 			train_op = model.get_operation_by_name("train_op")
-			cost = model.get_tensor_by_name("cost:0")
-			_, last_cost = sess.run((train_op, cost),
-				feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "learningRate:0":learningRate, "kp:0":kp})
+			_, _output, _Q, _cost = sess.run((train_op
+				, model.get_tensor_by_name("output:0")
+				, model.get_tensor_by_name("Q:0")
+				, model.get_tensor_by_name("cost:0"))
+				, feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
 
-			if step % 100 == 0:
-				info = "train step %d, epsilon: %f, learningRate: %f, cost: %f" % (step, epsilon, learningRate, last_cost)
+			if step % savePerStep == 0:
+				info = "train step %d, epsilon: %f, targetQ[0]: %f, cost: %f" % (step, epsilon, targetQ_batch[0], _cost)
 				if ui == None:
 					print(info)
-					print(status_1_batch)
-					print(Q_1_batch)
-					print(targetQ_batch)
+					print("action: ", action_0_batch[0])
+					print("output: ", _output[0])
+					print("Q: ", _Q[0])
+					if savePerStep == 1:
+						sleep(1)
 				else:
 					ui.log(info)
 				save_model()
@@ -305,7 +322,8 @@ def train_cal_reward(tetris, status_0, status_1, gameover):
 
 	info = "%f + %f - %d - %d" % (erase_raw * 10, inc_row_fill_rate * 100, inc_row, inc_masked_tile_cnt * 2)
 
-	return erase_raw * 10 + inc_row_fill_rate * 100 - inc_row - inc_masked_tile_cnt * 2, info
+	reward = (erase_raw * 10 + inc_row_fill_rate * 100 - inc_row - inc_masked_tile_cnt * 2) # / 100.0
+	return reward, info
 
 if __name__ == '__main__':
 	init_model()
