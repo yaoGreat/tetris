@@ -2,6 +2,7 @@
 import curses
 import sys
 import getopt
+import robot
 from game import Tetris
 from collections import deque
 
@@ -156,8 +157,6 @@ class TetrisUI:
 		if len(self.__log_info) > 30:
 			self.__log_info.popleft()
 			
-import model_0 as model
-
 def play():
 	game = Tetris()
 	ui = TetrisUI(game)
@@ -166,26 +165,26 @@ def play():
 	del game
 
 def play_train(with_ui = False, force_init = False):
-	model.init_model(train = True, forceinit = force_init)
+	robot.init_model(train = True, forceinit = force_init)
 	game = Tetris()
 	ui = None
 	if with_ui:
 		ui = TetrisUI(game, 100)
 	try:
-		model.train(game, ui = ui)
+		robot.train(game, ui = ui)
 	except KeyboardInterrupt:
 		print("user exit")
-	model.save_model()
+	robot.save_model()
 	if ui != None:
 		del ui
 	del game
 
 def play_ai():
 	game = Tetris()
-	model.init_model()
+	robot.init_model()
 	ui = TetrisUI(game)
 	try:
-		ui.loop(ai_model = model)
+		ui.loop(ai_model = robot)
 	except KeyboardInterrupt:
 		print("user exit")
 	del ui
