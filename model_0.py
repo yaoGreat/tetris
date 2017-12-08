@@ -24,18 +24,18 @@ model = None
 sess = None
 saver = None
 
-def weight_variable(shape):
+def weight_variable(shape, name=None):
 	initial = tf.truncated_normal(shape, stddev=0.1)
-	return tf.Variable(initial)
+	return tf.Variable(initial, name=name)
 
-def bias_variable(shape):
+def bias_variable(shape, name=None):
 	initial = tf.constant(0.1, shape=shape)
-	return tf.Variable(initial)
+	return tf.Variable(initial, name=name)
 
 def conv2d(x, W):
 	return tf.nn.conv2d(x, W, strides=[1,1,1,1], padding='SAME')
 
-def max_pool_2x2(x, name):
+def max_pool_2x2(x, name = None):
 	return tf.nn.max_pool(x, ksize=[1,2,2,1], strides=[1,2,2,1], padding='SAME', name=name)
 
 def create_model():
@@ -50,23 +50,23 @@ def create_model():
 
 		#layer 1
 		_tiles_reshape = tf.reshape(_tiles, [-1, 20, 10, 1])
-		W_conv1 = weight_variable([5,5,1,32])
-		b_conv1 = bias_variable([32])
+		W_conv1 = weight_variable([5,5,1,64], name="W_conv1")
+		b_conv1 = bias_variable([64], name="b_conv1")
 		h_conv1 = tf.nn.relu(conv2d(_tiles_reshape, W_conv1) + b_conv1)
 		h_pool1 = max_pool_2x2(h_conv1, name="h_pool1")
 		print("h_pool1", h_pool1)
 
-		#layer 2
-		W_conv2 = weight_variable([3,3,32,64])
-		b_conv2 = bias_variable([64])
-		h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
-		h_conv2 = max_pool_2x2(h_conv2, name="h_pool2")
-		print("h_conv2", h_conv2) # 5*3
+		#layer 2 感觉第二次卷积会让图像太简单了，所以去掉
+		# W_conv2 = weight_variable([3,3,32,64])
+		# b_conv2 = bias_variable([64])
+		# h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
+		# h_pool2 = max_pool_2x2(h_conv2, name="h_pool2")
+		# print("h_pool2", h_pool2) # 5*3
 
 		#layer fc1
-		W_fc1 = weight_variable([5 * 3 * 64 + 2, 1024])
+		W_fc1 = weight_variable([10 * 5 * 64 + 2, 1024])
 		b_fc1 = bias_variable([1024])
-		h_pool_flat = tf.reshape(h_conv2, [-1, 5 * 3 * 64])
+		h_pool_flat = tf.reshape(h_pool1, [-1, 10 * 5 * 64])
 		h_fc1_input = tf.concat([h_pool_flat, _current], 1)
 		h_fc1 = tf.nn.relu(tf.matmul(h_fc1_input, W_fc1) + b_fc1)
 		print("h_fc1_input", h_fc1_input)
@@ -99,21 +99,33 @@ def init_model(train = False, forceinit = False):
 	model = create_model()
 	if train:
 		create_train_op(model)
-	sess = tf.InteractiveSession(graph = model)
-	saver = tf.train.Saver(max_to_keep = 1)
-	cp = tf.train.latest_checkpoint('model_0/')
-	if cp == None or forceinit:
-		print("init model with default val")
-		tf.global_variables_initializer().run()
-		save_model()
-	else:
-		print("init model with saved val")
-		saver.restore(sess, cp)
+	#sess = tf.InteractiveSession(graph = model)
+	sess = tf.Session(graph = model) #这里使用普通的Session，是为了使用多个sess做准备
+
+	with model.as_default():
+		saver = tf.train.Saver(max_to_keep = 1)
+
+		cp = tf.train.latest_checkpoint('model_0/')
+		if cp == None or forceinit:
+			print("init model with default val")
+			tf.global_variables_initializer().run(session=sess)
+			save_model()
+		else:
+			print("init model with saved val")
+			saver.restore(sess, cp)
 
 def save_model():
 	global sess
 	global saver
 	saver.save(sess, 'model_0/save.ckpt')
+
+def restore_model(dst_sess):
+	global saver
+	cp = tf.train.latest_checkpoint('model_0/')
+	if cp != None:
+		saver.restore(dst_sess, cp)
+	else:
+		print("restore model fail.")
 
 __cur_step = -1
 __cur_output = 0
@@ -127,7 +139,7 @@ def run_game(tetris):
 		current = [[tetris.current_index(), tetris.next_index()]]
 		kp = 1
 		output = model.get_tensor_by_name("output:0")
-		__cur_output_xr = output.eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+		__cur_output_xr = sess.run(output, feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
 		__cur_step = tetris.step()
 		__cur_output = np.argmax(__cur_output_xr)
 		print("step %d, output: %d, x: %d, r: %d" % (__cur_step, __cur_output, int(__cur_output / 4), int(__cur_output % 4)))
@@ -146,25 +158,35 @@ def create_train_op(model):
 
 		#train
 		output = model.get_tensor_by_name("output:0")
-		Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+
+		# 个人感觉用max好一点，因为这样可以让tf知道，只有最大的值是有意义的。而用sum，则所有的分量都会参与运算（虽然传入的其他分量都是0）
+		# Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+		Q = tf.reduce_max(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+		
 		cost = tf.reduce_mean(tf.square(Q - _targetQ), name="cost")
-		optimizer = tf.train.GradientDescentOptimizer(0.5).minimize(cost, name="train_op")
+		
+		# 用梯度下降，则数值会变的越来越大，还不知道是什么原因
+		# optimizer = tf.train.GradientDescentOptimizer(0.5).minimize(cost, name="train_op")
+		optimizer = tf.train.AdamOptimizer(1e-4).minimize(cost, name="train_op")
 		print("optimizer", optimizer)
 
 	return model
 
 def train(tetris
 	, memory_size = 1000
-	, batch_size = 1 #50
+	, batch_size = 50
 	, train_steps = 10000
 	, gamma = 0.8
 	, init_epsilon = 1
 	, min_epsilon = 0.01
-	, savePerStep = 1 #100
+	, savePerStep = 100
 	, ui = None):
 	global model
 	global sess
 	D = deque()
+
+	target_sess = tf.Session(graph = model)
+	restore_model(target_sess)
 
 	epsilon = init_epsilon
 	step = 0
@@ -175,7 +197,7 @@ def train(tetris
 		if random.random() < epsilon:
 			action_0[random.randrange(40)] = 1
 		else:
-			idx = np.argmax(train_cal_action_weight([status_0], model)[0])
+			idx = np.argmax(train_cal_action_weight([status_0], model, sess)[0])
 			action_0[idx] = 1
 		epsilon = init_epsilon + (min_epsilon - init_epsilon) * step / train_steps
 
@@ -189,7 +211,7 @@ def train(tetris
 			D.popleft()
 
 		if ui != None:
-			weight = train_cal_action_weight([status_0], model)[0]
+			weight = train_cal_action_weight([status_0], model, sess)[0]
 			ui.log("action: %d, maxweight: %f, reward: %f, info: %s" % (np.argmax(action_0), np.max(weight), reward_1, reward_info))
 
 		#review memory
@@ -201,7 +223,7 @@ def train(tetris
 			status_1_batch = [d[3] for d in batch]
 			gameover_1_batch = [d[4] for d in batch]
 
-			Q_1_batch = train_cal_action_weight(status_1_batch, model)	#action_1 == Q_i+1
+			Q_1_batch = train_cal_action_weight(status_1_batch, model, target_sess)	#action_1 == Q_i+1
 
 			targetQ_batch = []
 			for i in range(len(batch)):
@@ -217,21 +239,24 @@ def train(tetris
 			_, _output, _Q, _cost = sess.run((train_op
 				, model.get_tensor_by_name("output:0")
 				, model.get_tensor_by_name("Q:0")
-				, model.get_tensor_by_name("cost:0"))
+				, model.get_tensor_by_name("cost:0")
+				# , model.get_tensor_by_name("W_conv1:0")
+				# , model.get_tensor_by_name("b_conv1:0")
+				)
 				, feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
 
 			if step % savePerStep == 0:
-				info = "train step %d, epsilon: %f, targetQ[0]: %f, cost: %f" % (step, epsilon, targetQ_batch[0], _cost)
+				info = "train step %d, epsilon: %f, action[0]: %d, targetQ[0]: %f, Q[0]: %f, cost: %f" % (step, epsilon, np.argmax(action_0_batch[0]), targetQ_batch[0], _Q[0], _cost)
 				if ui == None:
 					print(info)
-					print("action: ", action_0_batch[0])
-					print("output: ", _output[0])
-					print("Q: ", _Q[0])
-					if savePerStep == 1:
+					# print("W1: ", _W1)
+					# print("b1: ", _b1)
+					if savePerStep == 1:	#为了调试，这样能看清楚日志
 						sleep(1)
 				else:
 					ui.log(info)
 				save_model()
+				restore_model(target_sess)
 
 		#loop
 		status_0 = status_1
@@ -247,12 +272,11 @@ def train_make_status(tetris):	# 0, tiles; 1, current
 	status = {"tiles":tiles, "current":current, "score":score}
 	return status
 
-def train_cal_action_weight(status_s, use_model):
-	global sess
+def train_cal_action_weight(status_s, use_model, use_sess):
 	tiles = [status["tiles"] for status in status_s]
 	current = [status["current"] for status in status_s]
 	kp = 1
-	argmax_xr = use_model.get_tensor_by_name("output:0").eval(feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+	argmax_xr = use_sess.run(use_model.get_tensor_by_name("output:0"), feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
 	return argmax_xr
 
 def train_run_game(tetris, action, ui):

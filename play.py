@@ -170,7 +170,7 @@ def play_train(with_ui = False, force_init = False):
 	game = Tetris()
 	ui = None
 	if with_ui:
-		ui = TetrisUI(game, 1000)
+		ui = TetrisUI(game, 100)
 	try:
 		model.train(game, ui = ui)
 	except KeyboardInterrupt:
