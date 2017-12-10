@@ -164,14 +164,19 @@ def play():
 	del ui
 	del game
 
-def play_train(with_ui = False, force_init = False):
+def play_train(with_ui = False, force_init = False, train_count = 0, ui_tick = 0):
 	robot.init_model(train = True, forceinit = force_init)
 	game = Tetris()
 	ui = None
 	if with_ui:
-		ui = TetrisUI(game, 100)
+		if ui_tick == 0:
+			ui_tick = 100
+		ui = TetrisUI(game, ui_tick)
 	try:
-		robot.train(game, ui = ui)
+		if train_count == 0:
+			robot.train(game, ui = ui)
+		else:
+			robot.train(game, train_steps = train_count, ui = ui)
 	except KeyboardInterrupt:
 		print("user exit")
 	robot.save_model()
@@ -194,20 +199,24 @@ if __name__ == '__main__':
 	mode = "play"
 	train_with_ui = False
 	train_force_init = False
-	opts, _ = getopt.getopt(sys.argv[1:], "taun")
+	train_count = 0
+	ui_tick = 0
+	opts, _ = getopt.getopt(sys.argv[1:], "t:au:n")
 	for op, value in opts:
 		if op == "-t":
 			mode = "train"
+			train_count = int(value)
 		elif op == "-a":
 			mode = "ai"
 		elif op == "-u":
 			train_with_ui = True
+			ui_tick = int(value)
 		elif op == "-n":
 			train_force_init = True
 
 	if mode == "play":
 		play()
 	elif mode == "train":
-		play_train(train_with_ui, train_force_init)
+		play_train(with_ui=train_with_ui, force_init=train_force_init, train_count=train_count, ui_tick=ui_tick)
 	elif mode == "ai":
 		play_ai()

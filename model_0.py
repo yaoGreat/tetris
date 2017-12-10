@@ -68,3 +68,62 @@ def create_model():
 		print("output", output)
 
 	return model
+
+def rotate_layer(h_fc_input_rx, h_fc_input_rx_len):
+	W_fc1_rx = weight_variable([h_fc_input_rx_len, 1024])
+	b_fc1_rx = bias_variable([1024])
+	h_fc1_rx = tf.nn.relu(tf.matmul(h_fc_input_rx, W_fc1_rx) + b_fc1_rx)
+	print("h_fc1_rx", h_fc1_rx)
+
+	#layer fc2 for r0
+	W_fc2_rx = weight_variable([1024,256])
+	b_fc2_rx = bias_variable([256])
+	h_fc2_rx = tf.nn.relu(tf.matmul(h_fc1_rx, W_fc2_rx) + b_fc2_rx)
+	print("h_fc2_rx", h_fc2_rx)
+
+	#r0
+	W_rx = weight_variable([256, 10])
+	b_rx = bias_variable([10])
+	h_rx = tf.matmul(h_fc2_rx, W_rx) + b_rx
+	print("h_rx", h_rx)
+	return h_rx
+
+def create_model_2():
+	model = tf.Graph()
+	with model.as_default():
+		#input
+		_tiles = tf.placeholder(tf.float32, [None, 20, 10], name="tiles")
+		_current = tf.placeholder(tf.float32, [None, 2], name="current") # idx, next_idx
+		keep_prob = tf.placeholder(tf.float32, name="kp")
+		print("_tiles", _tiles)
+		print("_current", _current)
+
+		#layer conv 1
+		_tiles_reshape = tf.reshape(_tiles, [-1, 20, 10, 1])
+		W_conv1 = weight_variable([5,5,1,64], name="W_conv1")
+		b_conv1 = bias_variable([64], name="b_conv1")
+		h_conv1 = tf.nn.relu(conv2d(_tiles_reshape, W_conv1) + b_conv1)
+		h_pool1 = max_pool_2x2(h_conv1, name="h_pool1")
+		print("h_pool1", h_pool1)
+
+		#flat
+		h_pool_flat_len = 10 * 5 * 64
+		h_pool_flat = tf.reshape(h_pool1, [-1, h_pool_flat_len])
+		print("h_pool_flat", h_pool_flat)
+
+		# ====================================================================
+		# 分别计算4中旋转之下位置的权重
+		h_fc_input_rx = tf.concat([h_pool_flat, _current], 1)
+		h_fc_input_rx_len = h_pool_flat_len + 2
+		h_r0 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r1 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r2 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r3 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
+
+		# ==================================================================
+
+		#output 将上述的四组权重合并
+		output = tf.concat([h_r0, h_r1, h_r2, h_r3], 1, name="output")
+		print("output", output)
+
+	return model

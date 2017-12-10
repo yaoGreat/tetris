@@ -21,15 +21,22 @@ import model_0 as using_model
 
 # 模型已经加层了，一个卷积层，一个全连接层，但是数值还是会inf，所有，考虑一下多个sess吧
 
+# 收敛的问题已经解决了，现在有了一个最简单的，能够玩一种类型方块的ai
+# 有一个没有理解的问题是：之前的网路输入带有游戏中的随机值，导致算法的不确定性，但是不知为何，去掉这个不确定性，算法的效果反而差一些。还没理解。
+# 更新了一个新的模型，把4个旋转方向的网络独立运算。下一步，可以把这个算法重构一下，方便针对所有方向进行统一的调整和优化。现在的网络速度有点慢。
+# 接下来，可以做两件事：调整奖励函数；实验另一个带有旋转的方块看看。
+
 model = None
 sess = None
 saver = None
+is_new_model = False
 
 def init_model(train = False, forceinit = False):
 	global model
 	global sess
 	global saver
-	model = using_model.create_model()
+	global is_new_model
+	model = using_model.create_model_2()
 	if train:
 		create_train_op(model)
 	#sess = tf.InteractiveSession(graph = model)
@@ -43,9 +50,11 @@ def init_model(train = False, forceinit = False):
 			print("init model with default val")
 			tf.global_variables_initializer().run(session=sess)
 			save_model()
+			is_new_model = True
 		else:
 			print("init model with saved val")
 			saver.restore(sess, cp)
+			is_new_model = False
 
 def save_model():
 	global sess
@@ -68,8 +77,9 @@ def run_game(tetris):
 	global __cur_step
 	global __cur_output
 	if tetris.step() != __cur_step:
-		tiles = [tetris.tiles()]
-		current = [[tetris.current_index(), tetris.next_index()]]
+		status = train_make_status(tetris)
+		tiles = [status["tiles"]]
+		current = [status["current"]]
 		kp = 1
 		output = model.get_tensor_by_name("output:0")
 		__cur_output_xr = sess.run(output, feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
@@ -77,8 +87,9 @@ def run_game(tetris):
 		__cur_output = np.argmax(__cur_output_xr)
 		print("step %d, output: %d, x: %d, r: %d" % (__cur_step, __cur_output, int(__cur_output / 4), int(__cur_output % 4)))
 	
-	x = int(__cur_output / 4)
-	r = int(__cur_output % 4)
+	# x = int(__cur_output / 4)
+	# r = int(__cur_output % 4)
+	x, r = train_getxr_by_action(__cur_output)
 	if tetris.move_step_by_ai(x, r):
 		tetris.fast_finish()
 
@@ -116,10 +127,14 @@ def train(tetris
 	, ui = None):
 	global model
 	global sess
+	global is_new_model
 	D = deque()
 
 	target_sess = tf.Session(graph = model)
 	restore_model(target_sess)
+
+	if not is_new_model:
+		init_epsilon = float(init_epsilon) / 2
 
 	epsilon = init_epsilon
 	step = 0
@@ -179,7 +194,8 @@ def train(tetris
 				, feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
 
 			if step % savePerStep == 0:
-				info = "train step %d, epsilon: %f, action[0]: %d, targetQ[0]: %f, Q[0]: %f, cost: %f" % (step, epsilon, np.argmax(action_0_batch[0]), targetQ_batch[0], _Q[0], _cost)
+				info = "train step %d, epsilon: %f, action[0]: %d, targetQ[0]: %f, Q[0]: %f, cost: %f" \
+						% (step, epsilon, np.argmax(action_0_batch[0]), targetQ_batch[0], _Q[0], _cost)
 				if ui == None:
 					print(info)
 					# print("W1: ", _W1)
@@ -199,10 +215,26 @@ def train(tetris
 		
 
 def train_make_status(tetris):	# 0, tiles; 1, current
-	tiles = copy.deepcopy(tetris.tiles())
-	current = [tetris.current_index(), tetris.next_index()]
+	w = tetris.width()
+	h = tetris.height()
+	image = [[ 0 for x in range(w) ] for y in range(h)]
+	
+	tiles = tetris.tiles()
+	for y in range(0, h):
+		for x in range(0, w):
+			if tiles[y][x] > 0:
+				# image[y][x] = tiles[y][x]
+				image[y][x] = 1
+
+	# current = tetris.current()
+	# for t in current:
+	# 	x = t[0]
+	# 	y = t[1]
+	# 	image[y][x] = 1
+	
+	cur_block_idx = [tetris.current_index(), tetris.next_index()]
 	score = tetris.score()
-	status = {"tiles":tiles, "current":current, "score":score}
+	status = {"tiles":image, "current":cur_block_idx, "score":score}
 	return status
 
 def train_cal_action_weight(status_s, use_model, use_sess):
@@ -212,10 +244,16 @@ def train_cal_action_weight(status_s, use_model, use_sess):
 	argmax_xr = use_sess.run(use_model.get_tensor_by_name("output:0"), feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
 	return argmax_xr
 
+def train_getxr_by_action(action):
+	r = int(action / 10)
+	x = int(action % 10)
+	return x, r
+
 def train_run_game(tetris, action, ui):
 	xr = np.argmax(action)
-	x = int(xr / 4)
-	r = int(xr % 4)
+	# x = int(xr / 4)
+	# r = int(xr % 4)
+	x, r = train_getxr_by_action(xr)
 
 	while True:
 		move_finish = tetris.move_step_by_ai(x, r)
@@ -235,13 +273,67 @@ def train_run_game(tetris, action, ui):
 
 	return gameover
 
-def train_stat_tetris_info(status):
+# def train_stat_tetris_info(status):
+# 	row_cnt = 0
+# 	total_fill = 0
+# 	masked_tile_cnt = 0
+
+# 	tiles = status["tiles"]
+# 	top_y_index = [20] * len(tiles)	#top y indexs of status, for cal masked_tile_cnt
+# 	for y in range(len(tiles)):
+# 		row = tiles[y]
+# 		row_fill = 0
+# 		for x in range(len(row)):
+# 			t = row[x]
+# 			if t > 0:
+# 				row_fill += 1
+# 				top_y_index[x] = min(top_y_index[x], y)
+# 			else:
+# 				if y > top_y_index[x]:
+# 					masked_tile_cnt += 1
+# 		if row_fill > 0:
+# 			row_cnt += 1
+# 			total_fill += row_fill
+
+# 	fill_rate = 0
+# 	if row_cnt > 0:
+# 		fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
+
+# 	return row_cnt, fill_rate, masked_tile_cnt
+
+s_column_height = None
+s_column_hole = None
+s_fill_rate = 0
+
+def train_reset_reward_status():
+	global s_column_height
+	global s_column_hole
+	global s_fill_rate
+	s_column_height = [0] * 10
+	s_column_hole = [0] * 10
+	s_fill_rate = 0
+
+def train_cal_reward(tetris, status_0, status_1, gameover):
+	# 希望统计的内容：
+	# 行数的增量，被遮挡的空格数量，填充率
+	# 还可以增加一个高度差的属性
+	global s_column_height
+	global s_column_hole
+	global s_fill_rate
+
+	if gameover:
+		train_reset_reward_status()
+		return -1000, ""
+
+	if s_column_height == None:
+		train_reset_reward_status()
+
 	row_cnt = 0
 	total_fill = 0
-	masked_tile_cnt = 0
+	top_y_index = [20] * 10 # 临时数组，计算每一列中最顶端的y值，最上方为0，最下面是19
+	column_hole = [0] * 10
 
-	tiles = status["tiles"]
-	top_y_index = [20] * len(tiles)	#top y indexs of status, for cal masked_tile_cnt
+	tiles = tetris.tiles()
 	for y in range(len(tiles)):
 		row = tiles[y]
 		row_fill = 0
@@ -252,34 +344,27 @@ def train_stat_tetris_info(status):
 				top_y_index[x] = min(top_y_index[x], y)
 			else:
 				if y > top_y_index[x]:
-					masked_tile_cnt += 1
+					column_hole[x] += 1
 		if row_fill > 0:
 			row_cnt += 1
 			total_fill += row_fill
 
-	fill_rate = 0
-	if row_cnt > 0:
-		fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
 
-	return row_cnt, fill_rate, masked_tile_cnt
+	column_height = [20 - y for y in top_y_index]
+	fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
 
-def train_cal_reward(tetris, status_0, status_1, gameover):
-	# 希望统计的内容：
-	# 行数的增量，被遮挡的空格数量，填充率
-	if gameover:
-		return -1000, ""
+	erase_row = tetris.last_erase_row()
+	inc_row = max(column_height) - max(s_column_height)
+	inc_hole = sum(column_hole) - sum(s_column_hole)
+	inc_fill_rate = fill_rate - s_fill_rate
+	inc_var = np.array(column_height).var() - np.array(s_column_height).var() #每一列高度的方差，表示最顶层平整的程度
 
-	row_cnt_0, row_fill_rate_0, masked_tile_cnt_0 = train_stat_tetris_info(status_0)
-	row_cnt_1, row_fill_rate_1, masked_tile_cnt_1 = train_stat_tetris_info(status_1)
+	info = "erase_row: %d, inc_fill: %f, inc_row: %d, inc_hole: %d, inc_var: %f" % (erase_row, inc_fill_rate, inc_row, inc_hole, inc_var)
+	reward = (float(erase_row) * 10 + float(inc_fill_rate) * 100 - float(inc_row) * pow(1.05, max(column_height)) - float(inc_hole) * 2 - float(inc_var)) #/ 100.0
 
-	inc_row = float(row_cnt_1 - row_cnt_0)
-	inc_row_fill_rate = float(row_fill_rate_1 - row_fill_rate_0)
-	inc_masked_tile_cnt = float(masked_tile_cnt_1 - masked_tile_cnt_0)
-	erase_raw = float(tetris.last_erase_row())
-
-	info = "%f + %f - %d - %d" % (erase_raw * 10, inc_row_fill_rate * 100, inc_row, inc_masked_tile_cnt * 2)
-
-	reward = (erase_raw * 10 + inc_row_fill_rate * 100 - inc_row - inc_masked_tile_cnt * 2) # / 100.0
+	s_column_height = column_height
+	s_column_hole = column_hole
+	s_fill_rate = fill_rate
 	return reward, info
 
 if __name__ == '__main__':
