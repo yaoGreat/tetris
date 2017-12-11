@@ -351,7 +351,7 @@ def train_cal_reward(tetris, status_0, status_1, gameover):
 
 
 	column_height = [20 - y for y in top_y_index]
-	fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
+	fill_rate = float(total_fill) / float(row_cnt * len(tiles[0])) if row_cnt > 0 else 0
 
 	erase_row = tetris.last_erase_row()
 	inc_row = max(column_height) - max(s_column_height)
