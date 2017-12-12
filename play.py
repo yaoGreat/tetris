@@ -187,7 +187,7 @@ def play_train(with_ui = False, force_init = False, train_count = 0, ui_tick = 0
 def play_ai():
 	game = Tetris()
 	robot.init_model()
-	ui = TetrisUI(game)
+	ui = TetrisUI(game, 200)
 	try:
 		ui.loop(ai_model = robot)
 	except KeyboardInterrupt:

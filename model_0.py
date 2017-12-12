@@ -5,8 +5,8 @@ def weight_variable(shape, name=None):
 	initial = tf.truncated_normal(shape, stddev=0.1)
 	return tf.Variable(initial, name=name)
 
-def bias_variable(shape, name=None):
-	initial = tf.constant(0.1, shape=shape)
+def bias_variable(shape, init=0.1, name=None):
+	initial = tf.constant(init, shape=shape)
 	return tf.Variable(initial, name=name)
 
 def conv2d(x, W):
@@ -20,6 +20,7 @@ def create_model():
 	with model.as_default():
 		#input
 		_tiles = tf.placeholder(tf.float32, [None, 20, 10], name="tiles")
+		_column = tf.placeholder(tf.float32, [None, 10], name="column")
 		_current = tf.placeholder(tf.float32, [None, 2], name="current") # idx, next_idx
 		keep_prob = tf.placeholder(tf.float32, name="kp")
 		print("_tiles", _tiles)
@@ -69,22 +70,28 @@ def create_model():
 
 	return model
 
-def rotate_layer(h_fc_input_rx, h_fc_input_rx_len):
+def model_2_dnn_layer(h_fc_input_rx, h_fc_input_rx_len):
 	W_fc1_rx = weight_variable([h_fc_input_rx_len, 1024])
 	b_fc1_rx = bias_variable([1024])
-	h_fc1_rx = tf.nn.relu(tf.matmul(h_fc_input_rx, W_fc1_rx) + b_fc1_rx)
+	h_fc1_rx = tf.nn.relu6(tf.matmul(h_fc_input_rx, W_fc1_rx) + b_fc1_rx)
 	print("h_fc1_rx", h_fc1_rx)
 
-	#layer fc2 for r0
-	W_fc2_rx = weight_variable([1024,256])
-	b_fc2_rx = bias_variable([256])
-	h_fc2_rx = tf.nn.relu(tf.matmul(h_fc1_rx, W_fc2_rx) + b_fc2_rx)
+	#layer fc2 for rx
+	W_fc2_rx = weight_variable([1024,1024])
+	b_fc2_rx = bias_variable([1024])
+	h_fc2_rx = tf.nn.relu6(tf.matmul(h_fc1_rx, W_fc2_rx) + b_fc2_rx)
 	print("h_fc2_rx", h_fc2_rx)
 
-	#r0
-	W_rx = weight_variable([256, 10])
-	b_rx = bias_variable([10])
-	h_rx = tf.matmul(h_fc2_rx, W_rx) + b_rx
+	#layer fc3 for rx
+	W_fc3_rx = weight_variable([1024,1024])
+	b_fc3_rx = bias_variable([1024])
+	h_fc3_rx = tf.nn.relu6(tf.matmul(h_fc2_rx, W_fc3_rx) + b_fc3_rx)
+	print("h_fc3_rx", h_fc3_rx)
+
+	#out rx
+	W_rx = weight_variable([1024, 10])
+	b_rx = bias_variable([10], init=0.0)
+	h_rx = tf.matmul(h_fc3_rx, W_rx) + b_rx
 	print("h_rx", h_rx)
 	return h_rx
 
@@ -93,6 +100,7 @@ def create_model_2():
 	with model.as_default():
 		#input
 		_tiles = tf.placeholder(tf.float32, [None, 20, 10], name="tiles")
+		_column = tf.placeholder(tf.float32, [None, 10], name="column")
 		_current = tf.placeholder(tf.float32, [None, 2], name="current") # idx, next_idx
 		keep_prob = tf.placeholder(tf.float32, name="kp")
 		print("_tiles", _tiles)
@@ -105,7 +113,6 @@ def create_model_2():
 		h_conv1 = tf.nn.relu(conv2d(_tiles_reshape, W_conv1) + b_conv1)
 		h_pool1 = max_pool_2x2(h_conv1, name="h_pool1")
 		print("h_pool1", h_pool1)
-
 		#flat
 		h_pool_flat_len = 10 * 5 * 64
 		h_pool_flat = tf.reshape(h_pool1, [-1, h_pool_flat_len])
@@ -113,12 +120,14 @@ def create_model_2():
 
 		# ====================================================================
 		# 分别计算4中旋转之下位置的权重
-		h_fc_input_rx = tf.concat([h_pool_flat, _current], 1)
-		h_fc_input_rx_len = h_pool_flat_len + 2
-		h_r0 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
-		h_r1 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
-		h_r2 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
-		h_r3 = rotate_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_fc_input_rx = tf.concat([h_pool_flat, _column, _current], 1)
+		h_fc_input_rx_len = h_pool_flat_len + 10 + 2
+		# h_fc_input_rx = tf.concat([h_pool_flat, _current], 1)
+		# h_fc_input_rx_len = h_pool_flat_len + 2
+		h_r0 = model_2_dnn_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r1 = model_2_dnn_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r2 = model_2_dnn_layer(h_fc_input_rx, h_fc_input_rx_len)
+		h_r3 = model_2_dnn_layer(h_fc_input_rx, h_fc_input_rx_len)
 
 		# ==================================================================
 

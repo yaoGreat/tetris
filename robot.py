@@ -26,6 +26,9 @@ import model_0 as using_model
 # 更新了一个新的模型，把4个旋转方向的网络独立运算。下一步，可以把这个算法重构一下，方便针对所有方向进行统一的调整和优化。现在的网络速度有点慢。
 # 接下来，可以做两件事：调整奖励函数；实验另一个带有旋转的方块看看。
 
+# 现在的模型，对于顶端的状态貌似没有足够的重视
+# 训练4W次，可以解决T型的游戏了，下一步，多个方块
+
 model = None
 sess = None
 saver = None
@@ -78,11 +81,12 @@ def run_game(tetris):
 	global __cur_output
 	if tetris.step() != __cur_step:
 		status = train_make_status(tetris)
-		tiles = [status["tiles"]]
-		current = [status["current"]]
-		kp = 1
-		output = model.get_tensor_by_name("output:0")
-		__cur_output_xr = sess.run(output, feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+		# tiles = [status["tiles"]]
+		# current = [status["current"]]
+		# kp = 1
+		# output = model.get_tensor_by_name("output:0")
+		# __cur_output_xr = sess.run(output, feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+		__cur_output_xr = train_cal_action_weight([status], model, sess)[0]
 		__cur_step = tetris.step()
 		__cur_output = np.argmax(__cur_output_xr)
 		print("step %d, output: %d, x: %d, r: %d" % (__cur_step, __cur_output, int(__cur_output / 4), int(__cur_output % 4)))
@@ -104,8 +108,8 @@ def create_train_op(model):
 		output = model.get_tensor_by_name("output:0")
 
 		# 个人感觉用max好一点，因为这样可以让tf知道，只有最大的值是有意义的。而用sum，则所有的分量都会参与运算（虽然传入的其他分量都是0）
-		# Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
-		Q = tf.reduce_max(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+		Q = tf.reduce_sum(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
+		# Q = tf.reduce_max(tf.multiply(output, _action), reduction_indices = 1, name="Q")	# take the weight of _action in output as Q
 		
 		cost = tf.reduce_mean(tf.square(Q - _targetQ), name="cost")
 		
@@ -120,7 +124,7 @@ def train(tetris
 	, memory_size = 1000
 	, batch_size = 50
 	, train_steps = 10000
-	, gamma = 0.8
+	, gamma = 0.6
 	, init_epsilon = 1
 	, min_epsilon = 0.01
 	, savePerStep = 100
@@ -181,6 +185,7 @@ def train(tetris
 					targetQ_batch.append(reward_1_batch[i] + gamma * np.max(Q_1_batch[i]))
 
 			tiles = [status["tiles"] for status in status_0_batch]
+			column = [status["column"] for status in status_0_batch]
 			current = [status["current"] for status in status_0_batch]
 			kp = 1
 			train_op = model.get_operation_by_name("train_op")
@@ -191,11 +196,16 @@ def train(tetris
 				# , model.get_tensor_by_name("W_conv1:0")
 				# , model.get_tensor_by_name("b_conv1:0")
 				)
-				, feed_dict={"tiles:0":tiles, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
+				, feed_dict={"tiles:0":tiles, "column:0":column, "current:0":current, "action:0":action_0_batch, "targetQ:0":targetQ_batch, "kp:0":kp})
 
 			if step % savePerStep == 0:
-				info = "train step %d, epsilon: %f, action[0]: %d, targetQ[0]: %f, Q[0]: %f, cost: %f" \
-						% (step, epsilon, np.argmax(action_0_batch[0]), targetQ_batch[0], _Q[0], _cost)
+				match_cnt = 0
+				for i in range(batch_size):
+					if targetQ_batch[i] != 0 and float(abs(_Q[i] - targetQ_batch[i])) / float(targetQ_batch[i]) < 0.1:
+						match_cnt += 1
+				match_rate = float(match_cnt) / float(batch_size)
+				info = "train step %d, epsilon: %f, action[0]: %d, reward[0]: %f, targetQ[0]: %f, Q[0]: %f, matchs: %f, cost: %f" \
+						% (step, epsilon, np.argmax(action_0_batch[0]), reward_1_batch[0], targetQ_batch[0], _Q[0], match_rate, _cost)
 				if ui == None:
 					print(info)
 					# print("W1: ", _W1)
@@ -218,6 +228,7 @@ def train_make_status(tetris):	# 0, tiles; 1, current
 	w = tetris.width()
 	h = tetris.height()
 	image = [[ 0 for x in range(w) ] for y in range(h)]
+	column_height = [0] * 10
 	
 	tiles = tetris.tiles()
 	for y in range(0, h):
@@ -225,6 +236,7 @@ def train_make_status(tetris):	# 0, tiles; 1, current
 			if tiles[y][x] > 0:
 				# image[y][x] = tiles[y][x]
 				image[y][x] = 1
+				column_height[x] = max(column_height[x], 20 - y)
 
 	# current = tetris.current()
 	# for t in current:
@@ -234,14 +246,15 @@ def train_make_status(tetris):	# 0, tiles; 1, current
 	
 	cur_block_idx = [tetris.current_index(), tetris.next_index()]
 	score = tetris.score()
-	status = {"tiles":image, "current":cur_block_idx, "score":score}
+	status = {"tiles":image, "current":cur_block_idx, "column":column_height, "score":score}
 	return status
 
 def train_cal_action_weight(status_s, use_model, use_sess):
 	tiles = [status["tiles"] for status in status_s]
 	current = [status["current"] for status in status_s]
+	column_height = [status["column"] for status in status_s]
 	kp = 1
-	argmax_xr = use_sess.run(use_model.get_tensor_by_name("output:0"), feed_dict={"tiles:0":tiles, "current:0":current, "kp:0":kp})
+	argmax_xr = use_sess.run(use_model.get_tensor_by_name("output:0"), feed_dict={"tiles:0":tiles, "column:0":column_height, "current:0":current, "kp:0":kp})
 	return argmax_xr
 
 def train_getxr_by_action(action):
@@ -273,33 +286,6 @@ def train_run_game(tetris, action, ui):
 
 	return gameover
 
-# def train_stat_tetris_info(status):
-# 	row_cnt = 0
-# 	total_fill = 0
-# 	masked_tile_cnt = 0
-
-# 	tiles = status["tiles"]
-# 	top_y_index = [20] * len(tiles)	#top y indexs of status, for cal masked_tile_cnt
-# 	for y in range(len(tiles)):
-# 		row = tiles[y]
-# 		row_fill = 0
-# 		for x in range(len(row)):
-# 			t = row[x]
-# 			if t > 0:
-# 				row_fill += 1
-# 				top_y_index[x] = min(top_y_index[x], y)
-# 			else:
-# 				if y > top_y_index[x]:
-# 					masked_tile_cnt += 1
-# 		if row_fill > 0:
-# 			row_cnt += 1
-# 			total_fill += row_fill
-
-# 	fill_rate = 0
-# 	if row_cnt > 0:
-# 		fill_rate = float(total_fill) / float(row_cnt * len(tiles[0]))
-
-# 	return row_cnt, fill_rate, masked_tile_cnt
 
 s_column_height = None
 s_column_hole = None
@@ -360,7 +346,8 @@ def train_cal_reward(tetris, status_0, status_1, gameover):
 	inc_var = np.array(column_height).var() - np.array(s_column_height).var() #每一列高度的方差，表示最顶层平整的程度
 
 	info = "erase_row: %d, inc_fill: %f, inc_row: %d, inc_hole: %d, inc_var: %f" % (erase_row, inc_fill_rate, inc_row, inc_hole, inc_var)
-	reward = (float(erase_row) * 10 + float(inc_fill_rate) * 100 - float(inc_row) * pow(1.05, max(column_height)) - float(inc_hole) * 2 - float(inc_var)) #/ 100.0
+	# reward = (float(erase_row) * 10 + float(inc_fill_rate) * 100 - float(inc_row) * pow(1.05, max(column_height)) - float(inc_hole) * 2 - float(inc_var)) #/ 100.0
+	reward = (float(erase_row) * 15 - float(inc_row) * pow(1.1, max(column_height)) - float(inc_hole) * 4 - float(inc_var) * 2)
 
 	s_column_height = column_height
 	s_column_hole = column_hole
