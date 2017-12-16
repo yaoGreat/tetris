@@ -3,8 +3,10 @@ import curses
 import sys
 import getopt
 import robot
+import mcts
 from game import Tetris
 from collections import deque
+from time import sleep
 
 key_up = 65
 key_down = 66
@@ -164,8 +166,8 @@ def play():
 	del ui
 	del game
 
-def play_train(with_ui = False, force_init = False, train_count = 0, ui_tick = 0):
-	robot.init_model(train = True, forceinit = force_init)
+def play_train(with_ui = False, force_init = False, train_count = 0, learn_rate = 0, ui_tick = 0):
+	robot.init_model(train = True, forceinit = force_init, learning_rate = learn_rate)
 	game = Tetris()
 	ui = None
 	if with_ui:
@@ -187,7 +189,7 @@ def play_train(with_ui = False, force_init = False, train_count = 0, ui_tick = 0
 def play_ai():
 	game = Tetris()
 	robot.init_model()
-	ui = TetrisUI(game, 200)
+	ui = TetrisUI(game, 500)
 	try:
 		ui.loop(ai_model = robot)
 	except KeyboardInterrupt:
@@ -195,28 +197,44 @@ def play_ai():
 	del ui
 	del game
 
+def play_ai_without_ui():
+	game = Tetris()
+	robot.init_model()
+	mcts.print_info = True
+	while not game.gameover():
+		robot.run_game(game)
+		sleep(0.5)
+	del game
+
 if __name__ == '__main__':
 	mode = "play"
 	train_with_ui = False
 	train_force_init = False
 	train_count = 0
+	train_learnrate = 0
 	ui_tick = 0
-	opts, _ = getopt.getopt(sys.argv[1:], "t:au:n")
+	opts, _ = getopt.getopt(sys.argv[1:], "t:aAu:nl:")
 	for op, value in opts:
 		if op == "-t":
 			mode = "train"
 			train_count = int(value)
 		elif op == "-a":
 			mode = "ai"
+		elif op == "-A":
+			mode = "ai_dbg"
 		elif op == "-u":
 			train_with_ui = True
 			ui_tick = int(value)
 		elif op == "-n":
 			train_force_init = True
+		elif op == "-l":
+			train_learnrate = float(value)
 
 	if mode == "play":
 		play()
 	elif mode == "train":
-		play_train(with_ui=train_with_ui, force_init=train_force_init, train_count=train_count, ui_tick=ui_tick)
+		play_train(with_ui=train_with_ui, force_init=train_force_init, train_count=train_count, learn_rate = train_learnrate, ui_tick=ui_tick)
 	elif mode == "ai":
 		play_ai()
+	elif mode == "ai_dbg":
+		play_ai_without_ui()
