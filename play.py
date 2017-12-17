@@ -2,7 +2,7 @@
 import curses
 import sys
 import getopt
-import robot
+import robot_1 as robot
 import mcts
 from game import Tetris
 from collections import deque
