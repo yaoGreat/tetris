@@ -166,8 +166,8 @@ def play():
 	del ui
 	del game
 
-def play_train(with_ui = False, force_init = False, train_count = 0, learn_rate = 0, ui_tick = 0):
-	robot.init_model(train = True, forceinit = force_init, learning_rate = learn_rate)
+def play_train(with_ui = False, force_init = False, init_with_gold = False, train_count = 0, learn_rate = 0, ui_tick = 0):
+	robot.init_model(train = True, forceinit = force_init, init_with_gold = init_with_gold, learning_rate = learn_rate)
 	game = Tetris()
 	ui = None
 	if with_ui:
@@ -210,10 +210,11 @@ if __name__ == '__main__':
 	mode = "play"
 	train_with_ui = False
 	train_force_init = False
+	train_init_with_gold = False
 	train_count = 0
 	train_learnrate = 0
 	ui_tick = 0
-	opts, _ = getopt.getopt(sys.argv[1:], "t:aAu:nl:")
+	opts, _ = getopt.getopt(sys.argv[1:], "t:aAu:ngl:")
 	for op, value in opts:
 		if op == "-t":
 			mode = "train"
@@ -227,13 +228,16 @@ if __name__ == '__main__':
 			ui_tick = int(value)
 		elif op == "-n":
 			train_force_init = True
+		elif op == "-g":
+			train_init_with_gold = True
 		elif op == "-l":
 			train_learnrate = float(value)
 
 	if mode == "play":
 		play()
 	elif mode == "train":
-		play_train(with_ui=train_with_ui, force_init=train_force_init, train_count=train_count, learn_rate = train_learnrate, ui_tick=ui_tick)
+		play_train(with_ui=train_with_ui, force_init=train_force_init, init_with_gold = train_init_with_gold
+			, train_count=train_count, learn_rate = train_learnrate, ui_tick=ui_tick)
 	elif mode == "ai":
 		play_ai()
 	elif mode == "ai_dbg":

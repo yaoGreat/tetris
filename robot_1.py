@@ -23,7 +23,7 @@ saver = None
 is_new_model = False
 save_path = ""
 
-def init_model(train = False, forceinit = False, learning_rate = 0):
+def init_model(train = False, forceinit = False, init_with_gold = False, learning_rate = 0):
 	global model
 	global sess
 	global saver
@@ -33,6 +33,7 @@ def init_model(train = False, forceinit = False, learning_rate = 0):
 	# 初始化模型和路径
 	model = using_model.create_model_5()
 	save_path = "model_5/"
+	gold_save_path = "model_5_gold/"
 	
 	with model.as_default():
 		global_step = tf.Variable(0, name="step")
@@ -48,9 +49,13 @@ def init_model(train = False, forceinit = False, learning_rate = 0):
 		saver = tf.train.Saver(max_to_keep = 1)
 
 		cp = tf.train.latest_checkpoint(save_path)
-		if cp == None or forceinit:
-			print("init model with default val")
-			tf.global_variables_initializer().run(session=sess)
+		if cp == None or forceinit or init_with_gold:
+			if init_with_gold:
+				print("init model with gold val")
+				restore_model(sess, gold_save_path)
+			else:
+				print("init model with default val")
+				tf.global_variables_initializer().run(session=sess)
 			save_model()
 			is_new_model = True
 		else:
@@ -64,10 +69,12 @@ def save_model():
 	global save_path
 	saver.save(sess, save_path + 'save.ckpt')
 
-def restore_model(dst_sess):
+def restore_model(dst_sess, src_path = None):
 	global saver
 	global save_path
-	cp = tf.train.latest_checkpoint(save_path)
+	if src_path == None:
+		src_path = save_path
+	cp = tf.train.latest_checkpoint(src_path)
 	if cp != None:
 		saver.restore(dst_sess, cp)
 	else:
