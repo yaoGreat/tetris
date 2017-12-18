@@ -1,4 +1,5 @@
 ﻿import random
+import time
 
 # 长条 方块 T型 S1 S2 L1 L2
 group_table = [
@@ -171,6 +172,7 @@ class Tetris:
 		self.__pop_next()
 
 	def __init__(self):
+		random.seed(time.time())
 		self.reset()
 
 	def __gen_next(self):

@@ -108,7 +108,7 @@ def create_train_op(model, learning_rate):
 
 		# 0.98 ^ 100 = 0.13，所以X00表示每XW次训练，学习率降低1个数量级
 		global_step = model.get_tensor_by_name("step:0")
-		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=200, decay_rate=0.98, staircase=True)
+		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=150, decay_rate=0.98, staircase=True)
 		optimizer = tf.train.AdamOptimizer(init_lr).minimize(cost, name="train_op", global_step=global_step)
 		print("optimizer", optimizer)
 		print("init learning rate is: %f" % init_lr)
