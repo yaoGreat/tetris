@@ -1,4 +1,5 @@
-﻿import tensorflow as tf
+﻿from __future__ import print_function
+import tensorflow as tf
 import numpy as np
 from collections import deque
 from time import sleep
@@ -56,8 +57,8 @@ def init_model(train = False, forceinit = False, init_with_gold = False, learnin
 			else:
 				print("init model with default val")
 				tf.global_variables_initializer().run(session=sess)
+				is_new_model = True
 			save_model()
-			is_new_model = True
 		else:
 			print("init model with saved val")
 			saver.restore(sess, cp)
@@ -115,9 +116,9 @@ def create_train_op(model, learning_rate):
 
 		# 0.98 ^ 100 = 0.13，所以X00表示每XW次训练，学习率降低1个数量级
 		global_step = model.get_tensor_by_name("step:0")
-		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=150, decay_rate=0.98, staircase=True)
-		optimizer = tf.train.AdamOptimizer(init_lr).minimize(cost, name="train_op", global_step=global_step)
-		print("optimizer", optimizer)
+		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=2000, decay_rate=0.98, staircase=True, name="lr")
+		optimizer = tf.train.AdamOptimizer(decay_lr).minimize(cost, name="train_op", global_step=global_step)
+		# print("optimizer", optimizer)
 		print("init learning rate is: %f" % init_lr)
 
 	return model
@@ -129,8 +130,8 @@ def train(tetris
 	, gamma = 0.6
 	, init_epsilon = 1
 	, min_epsilon = 0.01
-	, savePerStep = 100
-	, upgateTargetPerStep = 1000
+	, printPerStep = 100
+	, upgateTargetAndSavePerStep = 1000
 	, ui = None):
 	global model
 	global sess
@@ -145,8 +146,9 @@ def train(tetris
 
 	epsilon = init_epsilon
 	step = 0
+	global_step = sess.run(model.get_tensor_by_name("step:0"))
 	status_0 = train_make_status(tetris)
-	print("train start at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
+	print("train start at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + ", global step: " + str(global_step))
 	while True:
 		#run game
 		action_0 = 0
@@ -160,7 +162,7 @@ def train(tetris
 		if gameover:
 			tetris.reset()
 		status_1 = train_make_status(tetris)
-		reward_1, reward_info = train_cal_reward(tetris, gameover)
+		reward_1, reward_info = train_cal_reward(tetris, global_step, gameover)
 
 		Q_0 = train_getQ([status_0], [action_0], model, sess)[0]
 		targetMaxQ_1, _ = train_getMaxQ(status_1, model, target_sess)
@@ -204,10 +206,11 @@ def train(tetris
 				next_s.append(_next)
 
 			t_trainnet_begin = datetime.datetime.now()
-			_, _output, _cost, _step = sess.run((model.get_operation_by_name("train_op")
+			_, _output, _cost, global_step, _lr = sess.run((model.get_operation_by_name("train_op")
 				, model.get_tensor_by_name("output:0")
 				, model.get_tensor_by_name("cost:0")
 				, model.get_tensor_by_name("step:0")
+				, model.get_tensor_by_name("lr:0")
 				)
 				, feed_dict={"from:0":from_s, "to:0":to_s, "next:0":next_s, "targetQ:0":targetQ_batch, "kp:0":0.75})
 			t_trainnet_use = datetime.datetime.now() - t_trainnet_begin
@@ -216,35 +219,36 @@ def train(tetris
 				batch[i][2] = _output[i]	# 更新记忆中的Q值，下次采样会用到
 				train_update_sample_rate(batch[i])
 
-			if step % savePerStep == 0:
+			if step % printPerStep == 0:
 				match_cnt = 0
 				for i in range(batch_size):
 					if targetQ_batch[i] != 0 and float(abs(_output[i] - targetQ_batch[i])) / float(abs(targetQ_batch[i])) < 0.1:
 						match_cnt += 1
 				match_rate = float(match_cnt) / float(batch_size)
-				info = "train step %d(g: %d), epsilon: %f, action[0]: %d, reward[0]: %f, targetQ[0]: %f, Q[0]: %f, matchs: %f, cost: %f (time: %d/%d)" \
-						% (step, _step, epsilon, np.argmax(action_0_batch[0]), reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
+				info = "train step %d(g: %d), epsilon: %f, lr: %f, action[0]: %d, reward[0]: %f, targetQ[0]: %f, Q[0]: %f, matchs: %f, cost: %f (time: %d/%d)" \
+						% (step, global_step, epsilon, _lr, np.argmax(action_0_batch[0]), reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
 						, t_caltarget_use.microseconds, t_trainnet_use.microseconds)
 				if ui == None:
 					print(info)
-					if savePerStep == 1:	#为了调试，这样能看清楚日志
+					if printPerStep == 1:	#为了调试，这样能看清楚日志
 						sleep(1)
 				else:
 					ui.log(info)
-				save_model()
 
-			if step % upgateTargetPerStep == 0:
+			if step % upgateTargetAndSavePerStep == 0:
 				print("update target session...")
 				restore_model(target_sess)
-
 				x = 0
 				for memory in D:
 					memory[5], _ = train_getMaxQ(memory[4], model, target_sess)
 					train_update_sample_rate(memory)
 					x += 1
-					if x % 100 == 0:
-						print("update target maxQ: %d/%d" % (x, len(D)))
+					# if x % 100 == 0:
+					# 	#print("update target maxQ: %d/%d" % (x, len(D)))
+					# 	print("...", end='')
 
+				print("save model...")
+				save_model()
 		#loop
 		status_0 = status_1
 		step += 1
@@ -404,7 +408,7 @@ def train_reset_reward_status():
 	global s_last_score
 	s_last_score = 0
 
-def train_cal_reward(tetris, gameover = False):
+def train_cal_reward(tetris, global_step, gameover = False):
 	# https://codemyroad.wordpress.com/2013/04/14/tetris-ai-the-near-perfect-player/
 	# 这个函数还可以调整，按照论文，还可以修改为从启发式规则到游戏得分的过度
 	global s_last_score
@@ -440,6 +444,9 @@ def train_cal_reward(tetris, gameover = False):
 	info = "aggregate_height: %d, complete_lines: %d, holes: %d, bumpiness: %d" % (aggregate_height, complete_lines, holes, bumpiness)
 
 	s_last_score = score
+
+	if global_step > 50000: #对于训练次数达到一定程度的模型，增加这个奖励
+		reward += complete_lines * complete_lines
 	return reward, info
 
 if __name__ == '__main__':
