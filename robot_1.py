@@ -13,9 +13,9 @@ import mcts
 
 # [OK]现在计算targetQ太慢，考虑：1、合并批次，同同一个批次计算。2、每次生成记录时直接计算，然后在target session更新时重新计算一遍。
 # [OK]reward 函数需要按照论文重新写
-# 优先清扫还没有实现，如果实现这个，也需要在memory中预先保存Q和targetQ——实现了基本的数据准备，包括权重计算额更新，目前缺少sample函数。这个功能主要是提升效率
-# 关于奖励函数的转换，从启发式规则到分数驱动——这个功能会提高后期效果，还需要考虑一下怎么做
-# 现在准备了5、6两个模型，到时候可以分别测试一下
+# [OK]优先清扫还没有实现，如果实现这个，也需要在memory中预先保存Q和targetQ——实现了基本的数据准备，包括权重计算额更新，目前缺少sample函数。这个功能主要是提升效率
+# 关于奖励函数的转换，从启发式规则到分数驱动——这个功能会提高后期效果，还需要考虑一下怎么做，目前的思路是，从gold中加载模型，然后用新的奖励函数去训练
+# [OK]现在准备了5、6两个模型，到时候可以分别测试一下——现在看差不多，但是从速度上，还是选择5
 
 model = None
 sess = None
@@ -176,7 +176,8 @@ def train(tetris
 
 		#review memory
 		if len(D) > batch_size:
-			batch = random.sample(D, batch_size)
+			# batch = random.sample(D, batch_size)
+			batch = train_sample(D, batch_size)
 			status_0_batch = [d[0] for d in batch]
 			action_0_batch = [d[1] for d in batch]
 			reward_1_batch = [d[3] for d in batch]
@@ -213,7 +214,7 @@ def train(tetris
 
 			for i in range(len(batch)):
 				batch[i][2] = _output[i]	# 更新记忆中的Q值，下次采样会用到
-				batch[i][7] = abs(batch[i][2] - batch[i][3] - batch[i][5])
+				train_update_sample_rate(batch[i])
 
 			if step % savePerStep == 0:
 				match_cnt = 0
@@ -239,7 +240,7 @@ def train(tetris
 				x = 0
 				for memory in D:
 					memory[5], _ = train_getMaxQ(memory[4], model, target_sess)
-					memory[7] = abs(memory[2] - memory[3] - memory[5])
+					train_update_sample_rate(memory)
 					x += 1
 					if x % 100 == 0:
 						print("update target maxQ: %d/%d" % (x, len(D)))
@@ -252,9 +253,29 @@ def train(tetris
 
 	print("train finish at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 
-def train_sample(D, size, indexPriority):
-	priproity = [d[indexPriority] for d in D]
-	pass
+def train_update_sample_rate(m):
+	m[7] = abs(m[2] - m[3] - m[5])
+
+def train_sample(D, size):
+	# https://docs.scipy.org/doc/numpy-1.13.0/reference/generated/numpy.random.choice.html
+	priproity = [d[7] for d in D]
+	s = float(sum(priproity))
+	normal_priproity = [float(p) / s for p in priproity]
+
+	idxs = np.random.choice(len(D), size, False, normal_priproity)
+	batch = []
+	for i in idxs:
+		batch.append(D[i])
+
+	# bi = "bi: "
+	# for m in batch:
+	# 	bi += str(m[7]) + ", "
+	# si = "si: "
+	# for m in D:
+	# 	si += str(m[7]) + ", "
+	# print(bi)
+	# print(si)
+	return batch
 
 def train_make_status(tetris):	# 0, tiles; 1, current
 	w = tetris.width()
