@@ -171,6 +171,12 @@ class Tetris:
 		self.__gen_next()
 		self.__pop_next()
 
+	def random_tiles(self, h, r = 0.8):
+		for y in range(20-h, 20):
+			for x in range(10):
+				if random.random() < r:
+					self.__tiles[y][x] = random.randint(1, 9)
+
 	def __init__(self):
 		random.seed(time.time())
 		self.reset()

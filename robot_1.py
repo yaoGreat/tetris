@@ -15,8 +15,11 @@ import mcts
 # [OK]现在计算targetQ太慢，考虑：1、合并批次，同同一个批次计算。2、每次生成记录时直接计算，然后在target session更新时重新计算一遍。
 # [OK]reward 函数需要按照论文重新写
 # [OK]优先清扫还没有实现，如果实现这个，也需要在memory中预先保存Q和targetQ——实现了基本的数据准备，包括权重计算额更新，目前缺少sample函数。这个功能主要是提升效率
-# 关于奖励函数的转换，从启发式规则到分数驱动——这个功能会提高后期效果，还需要考虑一下怎么做，目前的思路是，从gold中加载模型，然后用新的奖励函数去训练
+# [OK]关于奖励函数的转换，从启发式规则到分数驱动——这个功能会提高后期效果，还需要考虑一下怎么做，目前的思路是，从gold中加载模型，然后用新的奖励函数去训练
 # [OK]现在准备了5、6两个模型，到时候可以分别测试一下——现在看差不多，但是从速度上，还是选择5
+# [OK]现在对于层次低的时候效果不错，但是摞高了就不行了，考虑针对有一定高度的时候进行强化训练。比如让游戏每次初始化都有一个随机的高度？
+# ————加了高层的训练数据后，结果被玩坏了，看来明天得从gold重新开始训练
+# [OK]可以考虑一个重置学习步骤的操作，这样对调整学习率有好处——不过感觉还是直接调整学习率好一点，毕竟训练次数是一个记录
 
 model = None
 sess = None
@@ -50,7 +53,7 @@ def init_model(train = False, forceinit = False, init_with_gold = False, learnin
 		saver = tf.train.Saver(max_to_keep = 1)
 
 		cp = tf.train.latest_checkpoint(save_path)
-		if cp == None or forceinit or init_with_gold:
+		if cp == None or forceinit:
 			if init_with_gold:
 				print("init model with gold val")
 				restore_model(sess, gold_save_path)
@@ -109,20 +112,20 @@ def create_train_op(model, learning_rate):
 		Q = model.get_tensor_by_name("output:0")		
 		cost = tf.reduce_mean(tf.square(Q - _targetQ), name="cost")
 		
-		# 用梯度下降，则数值会变的越来越大，还不知道是什么原因
-		init_lr = 1e-4
-		if learning_rate != 0:
-			init_lr = learning_rate
-
-		# 0.98 ^ 100 = 0.13，所以X00表示每XW次训练，学习率降低1个数量级
 		global_step = model.get_tensor_by_name("step:0")
-		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=2000, decay_rate=0.98, staircase=True, name="lr")
-		optimizer = tf.train.AdamOptimizer(decay_lr).minimize(cost, name="train_op", global_step=global_step)
-		# print("optimizer", optimizer)
-		print("init learning rate is: %f" % init_lr)
+		init_lr = 1e-4
+		decay_lr = tf.train.exponential_decay(init_lr, global_step, decay_steps=1500, decay_rate=0.98, staircase=True, name="lr")
+		if learning_rate == 0:
+			# 0.98 ^ 100 = 0.13，所以X00表示每XW次训练，学习率降低1个数量级
+			optimizer = tf.train.AdamOptimizer(decay_lr).minimize(cost, name="train_op", global_step=global_step)
+			print("decay learning rate with init value: %f" % init_lr)
+		else:
+			optimizer = tf.train.AdamOptimizer(learning_rate).minimize(cost, name="train_op", global_step=global_step)
+			print("fix learning rate: %f" % learning_rate)
 
 	return model
 
+MASTER_TRAIN_COUNT = 50000
 def train(tetris
 	, memory_size = 1000
 	, batch_size = 50
@@ -161,6 +164,8 @@ def train(tetris
 		gameover = train_run_game(tetris, action_0, ui)  #use the action to run, then get reward
 		if gameover:
 			tetris.reset()
+			# if global_step > MASTER_TRAIN_COUNT:
+			# 	tetris.random_tiles(random.randint(0, 5))
 		status_1 = train_make_status(tetris)
 		reward_1, reward_info = train_cal_reward(tetris, global_step, gameover)
 
@@ -226,7 +231,7 @@ def train(tetris
 						match_cnt += 1
 				match_rate = float(match_cnt) / float(batch_size)
 				info = "train step %d(g: %d), epsilon: %f, lr: %f, action[0]: %d, reward[0]: %f, targetQ[0]: %f, Q[0]: %f, matchs: %f, cost: %f (time: %d/%d)" \
-						% (step, global_step, epsilon, _lr, np.argmax(action_0_batch[0]), reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
+						% (step, global_step, epsilon, _lr, action_0_batch[0], reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
 						, t_caltarget_use.microseconds, t_trainnet_use.microseconds)
 				if ui == None:
 					print(info)
@@ -285,20 +290,18 @@ def train_make_status(tetris):	# 0, tiles; 1, current
 	w = tetris.width()
 	h = tetris.height()
 	image = [[ 0 for x in range(w) ] for y in range(h)]
-	column_height = [0] * 10
 	
 	tiles = tetris.tiles()
 	for y in range(0, h):
 		for x in range(0, w):
 			if tiles[y][x] > 0:
 				image[y][x] = 1
-				column_height[x] = max(column_height[x], 20 - y)
 	
 	_current = tetris.current_index()
 	_next = tetris.next_index()
 	_score = tetris.score()
 	_step = tetris.step()
-	status = {"tiles":image, "current":_current, "next":_next, "column":column_height, "score":_score, "step":_step}
+	status = {"tiles":image, "current":_current, "next":_next, "score":_score, "step":_step}
 	return status
 
 def train_getQ(status_s, action_s, use_model, use_sess):
@@ -408,6 +411,10 @@ def train_reset_reward_status():
 	global s_last_score
 	s_last_score = 0
 
+def train_heuristic_score(aggregate_height, complete_lines, holes, bumpiness): # 启发性评分规则
+	score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
+	return score
+
 def train_cal_reward(tetris, global_step, gameover = False):
 	# https://codemyroad.wordpress.com/2013/04/14/tetris-ai-the-near-perfect-player/
 	# 这个函数还可以调整，按照论文，还可以修改为从启发式规则到游戏得分的过度
@@ -432,20 +439,20 @@ def train_cal_reward(tetris, global_step, gameover = False):
 			elif height < column_height[x]:
 				holes += 1
 
-	if complete_lines > 0:	#complete_lines 记录的时消除之前的行数
-		for i in range(10):
-			column_height[i] += complete_lines
 	aggregate_height = sum(column_height)
+	aggregate_height_just_clear = complete_lines * 10 #刚刚消去的行数要记入当前操作评价的分数，但是不作为下一次分数的比较
 	bumpiness = sum([abs(column_height[i] - column_height[i+1]) for i in range(9)])
 
-	score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
+	score = train_heuristic_score(aggregate_height + aggregate_height_just_clear, complete_lines, holes, bumpiness)
+	#score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
 
 	reward = score - s_last_score
 	info = "aggregate_height: %d, complete_lines: %d, holes: %d, bumpiness: %d" % (aggregate_height, complete_lines, holes, bumpiness)
 
-	s_last_score = score
+	# 为下一次操作记录评分时，消除行数为0，否则会影响下一次的计算
+	s_last_score = train_heuristic_score(aggregate_height, 0, holes, bumpiness)
 
-	if global_step > 50000: #对于训练次数达到一定程度的模型，增加这个奖励
+	if global_step > MASTER_TRAIN_COUNT: #对于训练次数达到一定程度的模型，增加这个奖励
 		reward += complete_lines * complete_lines
 	return reward, info
 
