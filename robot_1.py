@@ -25,6 +25,7 @@ model = None
 sess = None
 saver = None
 is_new_model = False
+fix_learningrate = 0
 save_path = ""
 
 def init_model(train = False, forceinit = False, init_with_gold = False, learning_rate = 0):
@@ -103,6 +104,8 @@ def run_game(tetris):
 
 
 def create_train_op(model, learning_rate):
+	global fix_learningrate
+
 	with model.as_default():
 		#train input
 		_action = tf.placeholder(tf.float32, [None, 40], name="action")
@@ -118,9 +121,11 @@ def create_train_op(model, learning_rate):
 		if learning_rate == 0:
 			# 0.98 ^ 100 = 0.13，所以X00表示每XW次训练，学习率降低1个数量级
 			optimizer = tf.train.AdamOptimizer(decay_lr).minimize(cost, name="train_op", global_step=global_step)
+			fix_learningrate = 0
 			print("decay learning rate with init value: %f" % init_lr)
 		else:
 			optimizer = tf.train.AdamOptimizer(learning_rate).minimize(cost, name="train_op", global_step=global_step)
+			fix_learningrate = learning_rate
 			print("fix learning rate: %f" % learning_rate)
 
 	return model
@@ -139,17 +144,21 @@ def train(tetris
 	global model
 	global sess
 	global is_new_model
+	global fix_learningrate
 	D = deque()
 
 	target_sess = tf.Session(graph = model)
 	restore_model(target_sess)
+	global_step = sess.run(model.get_tensor_by_name("step:0"))
 
 	if not is_new_model:
 		init_epsilon = float(init_epsilon) / 2
 
+	# if global_step > MASTER_TRAIN_COUNT: # 训练更多之后，减少探索数量
+	# 	init_epsilon = 0.05
+
 	epsilon = init_epsilon
 	step = 0
-	global_step = sess.run(model.get_tensor_by_name("step:0"))
 	status_0 = train_make_status(tetris)
 	print("train start at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + ", global step: " + str(global_step))
 	while True:
@@ -230,8 +239,9 @@ def train(tetris
 					if targetQ_batch[i] != 0 and float(abs(_output[i] - targetQ_batch[i])) / float(abs(targetQ_batch[i])) < 0.1:
 						match_cnt += 1
 				match_rate = float(match_cnt) / float(batch_size)
+				using_lr = fix_learningrate if fix_learningrate > 0 else _lr
 				info = "train step %d(g: %d), epsilon: %f, lr: %f, action[0]: %d, reward[0]: %f, targetQ[0]: %f, Q[0]: %f, matchs: %f, cost: %f (time: %d/%d)" \
-						% (step, global_step, epsilon, _lr, action_0_batch[0], reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
+						% (step, global_step, epsilon, using_lr, action_0_batch[0], reward_1_batch[0], targetQ_batch[0], _output[0], match_rate, _cost \
 						, t_caltarget_use.microseconds, t_trainnet_use.microseconds)
 				if ui == None:
 					print(info)
@@ -422,9 +432,13 @@ def train_cal_reward(tetris, global_step, gameover = False):
 
 	if gameover:
 		train_reset_reward_status()
-		return -100, ""
+		return -100, "game over"
 
 	complete_lines = tetris.last_erase_row()
+	# ——经过测试，下面的方法并不好，导致训练效果差很多，感觉上，缺少了指导，单纯得分为导向的评价，确实很难训练
+	# if global_step > MASTER_TRAIN_COUNT: #对于训练次数达到一定程度的模型，仅仅使用消去作为奖励，这样是为了消去的更多
+	# 	return complete_lines * complete_lines, "complete_lines: %d" % complete_lines
+
 	column_height = [0] * 10
 	holes = 0
 
