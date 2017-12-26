@@ -34,6 +34,9 @@ import mcts
 评价函数：score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
 训练次数：2000，学习率 0.0001
 最高份51分
+
+2017-12-26
+新提交的版本，学习率0.0001 golden基础上30000次：max: 146, min: 31, avg: 72
 '''
 
 model = None
