@@ -197,14 +197,23 @@ def play_ai():
 	del ui
 	del game
 
-def play_ai_without_ui():
+def play_ai_without_ui(count):
+	if count == 0:
+		count = 10
 	game = Tetris()
 	robot.init_model()
 	mcts.print_info = True
-	while not game.gameover():
-		robot.run_game(game)
-		sleep(0.5)
+	scores = []
+	for i in range(count):
+		while not game.gameover():
+			robot.run_game(game)
+			# sleep(0.5)
+		scores.append(game.score())
+		print("game over, score: %d, step: %d" % (game.score(), game.step()))
+		game.reset()
 	del game
+
+	print("max: %d, min: %d, avg: %d" % (max(scores), min(scores), float(sum(scores)) / len(scores)))
 
 if __name__ == '__main__':
 	mode = "play"
@@ -213,8 +222,9 @@ if __name__ == '__main__':
 	train_init_with_gold = False
 	train_count = 0
 	train_learnrate = 0
+	ai_dbg_count = 0
 	ui_tick = 0
-	opts, _ = getopt.getopt(sys.argv[1:], "t:aAu:ngl:")
+	opts, _ = getopt.getopt(sys.argv[1:], "t:aA:u:ngl:")
 	for op, value in opts:
 		if op == "-t":
 			mode = "train"
@@ -223,6 +233,7 @@ if __name__ == '__main__':
 			mode = "ai"
 		elif op == "-A":
 			mode = "ai_dbg"
+			ai_dbg_count = int(value)
 		elif op == "-u":
 			train_with_ui = True
 			ui_tick = int(value)
@@ -241,4 +252,4 @@ if __name__ == '__main__':
 	elif mode == "ai":
 		play_ai()
 	elif mode == "ai_dbg":
-		play_ai_without_ui()
+		play_ai_without_ui(ai_dbg_count)

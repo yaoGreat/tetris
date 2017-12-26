@@ -20,7 +20,13 @@ import mcts
 # [OK]现在对于层次低的时候效果不错，但是摞高了就不行了，考虑针对有一定高度的时候进行强化训练。比如让游戏每次初始化都有一个随机的高度？
 # ————加了高层的训练数据后，结果被玩坏了，看来明天得从gold重新开始训练
 # [OK]可以考虑一个重置学习步骤的操作，这样对调整学习率有好处——不过感觉还是直接调整学习率好一点，毕竟训练次数是一个记录
+# [OK]关于探索步骤的选择，可以让随机探索的步骤，在模型计算的前几个步骤中产生，这样的训练效果明显好一些
 # 现在的模型会出现空洞，是否可以提高空洞的惩罚
+# ——只提高了空洞的惩罚，但是并不好用，还是会出现空洞，我理解，是因为消去空洞会获得的奖励与制造空洞所产生的惩罚一样多，所以ai会制造空洞，然后再去消除，获得更高的分数。
+# ——所以，我打算尝试将空洞的奖励做成不对称的，制造的惩罚要大于消去的奖励
+# ——经测试，这个方法貌似效果也不好
+
+# 需要针对-A的明星写一个模型评测的算法了
 
 '''
 目前的最佳模型 model_5_best_51：
@@ -34,6 +40,7 @@ model = None
 sess = None
 saver = None
 is_new_model = False
+is_master = False
 fix_learningrate = 0
 save_path = ""
 
@@ -139,7 +146,7 @@ def create_train_op(model, learning_rate):
 
 	return model
 
-MASTER_TRAIN_COUNT = 50000
+# MASTER_TRAIN_COUNT = 50000
 def train(tetris
 	, memory_size = 1000
 	, batch_size = 50
@@ -154,38 +161,62 @@ def train(tetris
 	global sess
 	global is_new_model
 	global fix_learningrate
+	global is_master
 	D = deque()
+
+	# Debug
+	# batch_size = 1
+	# printPerStep = 1
+	# Finish Debug
 
 	target_sess = tf.Session(graph = model)
 	restore_model(target_sess)
 	global_step = sess.run(model.get_tensor_by_name("step:0"))
+	is_master = global_step > 50000
 
 	if not is_new_model:
 		init_epsilon = float(init_epsilon) / 2
 
-	# if global_step > MASTER_TRAIN_COUNT: # 训练更多之后，减少探索数量
-	# 	init_epsilon = 0.05
-
 	epsilon = init_epsilon
 	step = 0
 	status_0 = train_make_status(tetris)
-	print("train start at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + ", global step: " + str(global_step))
+	print("train start at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) \
+			 + ", global step: " + str(global_step) + ", Master: " + str(is_master))
 	while True:
 		#run game
 		action_0 = 0
-		if random.random() < epsilon:
-			action_0 = random.randrange(len(train_getValidAction(status_0)))
-		else:
-			_, action_0 = train_getMaxQ(status_0, model, sess)
+		if is_master: # 我修改的算法，在高级模式下，让动作采集来自现有的策略中的前几个
+			Action_s = train_getActionArrayByQ(status_0, model, sess)
+			if random.random() < epsilon:
+				selectable_size = int(len(Action_s) / 4)
+				action_0 = Action_s[random.randrange(0, selectable_size)]
+			else:
+				action_0 = Action_s[0]
+
+			# selectable_size = len(Action_s) / 4
+			# t = float(step) / float(train_steps)
+			# k = train_lerp(0, 0.9, t)
+			# p_s = [(selectable_size - i) * k for i in range(selectable_size)]
+			# p_s_softmax = train_softmax(p_s)
+			# # print(p_s)
+			# # print(p_s_softmax)
+			# action_0 = np.random.choice(Action_s[0:selectable_size], p = train_softmax(p_s_softmax))
+			# # t = float(step) / float(train_steps)
+			# # rand_action_size = int(train_lerp(5, 1, t))
+			# # action_0 = Action_s[random.randrange(rand_action_size)]
+		else: # 经典deepQ算法
+			if random.random() < epsilon:
+				action_0 = random.randrange(len(train_getValidAction(status_0)))
+			else:
+				_, action_0 = train_getMaxQ(status_0, model, sess)
 		epsilon = init_epsilon + (min_epsilon - init_epsilon) * step / train_steps
 
 		gameover = train_run_game(tetris, action_0, ui)  #use the action to run, then get reward
 		if gameover:
+			print("train game over, score: %d, step: %d" % (tetris.score(), tetris.step()))
 			tetris.reset()
-			# if global_step > MASTER_TRAIN_COUNT:
-			# 	tetris.random_tiles(random.randint(0, 5))
 		status_1 = train_make_status(tetris)
-		reward_1, reward_info = train_cal_reward(tetris, global_step, gameover)
+		reward_1, reward_info = train_cal_reward(tetris, gameover)
 
 		Q_0 = train_getQ([status_0], [action_0], model, sess)[0]
 		targetMaxQ_1, _ = train_getMaxQ(status_1, model, target_sess)
@@ -281,6 +312,12 @@ def train(tetris
 
 	print("train finish at: " + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 
+def train_softmax(x):
+	return np.exp(x) / np.sum(np.exp(x), axis = 0)
+
+def train_lerp(x0, x1, t):
+	return x0 + (x1 - x0) * t
+
 def train_update_sample_rate(m):
 	m[7] = abs(m[2] - m[3] - m[5])
 
@@ -337,13 +374,26 @@ def train_getQ(status_s, action_s, use_model, use_sess):
 	return Q
 
 def train_getMaxQ(status, use_model, use_sess):
+	Q_s = train_getQ_Array(status, use_model, use_sess)
+	return max(Q_s), np.argmax(Q_s)
+
+def train_getQ_Array(status, use_model, use_sess):
 	status_s = []
 	action_s = []
 	for i in train_getValidAction(status):
 		status_s.append(status)
 		action_s.append(i)
 	Q_s = train_getQ(status_s, action_s, use_model, use_sess)
-	return max(Q_s), np.argmax(Q_s)
+	return Q_s
+
+def train_getActionArrayByQ(status, use_model, use_sess):
+	Q_s = train_getQ_Array(status, use_model, use_sess)
+	Action_s = []
+	for i in range(len(Q_s)):
+		a = np.argmax(Q_s)
+		Q_s[a] = -10000
+		Action_s.append(a)
+	return Action_s
 
 def train_getMaxQ_batch(status_batch, use_model, use_sess):
 	status_s = []
@@ -424,27 +474,46 @@ def train_run_game(tetris, action, ui):
 
 	return tetris.gameover()
 
-s_last_score = 0
+# s_last_score = 0
+s_last_aggregate_height = 0
+s_last_holes = 0
+s_last_bumpiness = 0
 
 def train_reset_reward_status():
-	global s_last_score
-	s_last_score = 0
+	# global s_last_score
+	global s_last_aggregate_height
+	global s_last_holes
+	global s_last_bumpiness
+	# s_last_score = 0
+	s_last_aggregate_height = 0
+	s_last_holes = 0
+	s_last_bumpiness = 0
 
 def train_heuristic_score(aggregate_height, complete_lines, holes, bumpiness): # 启发性评分规则
+	# global is_master
+	# if is_master: #对于训练次数达到一定程度的模型，增加这个奖励
+	# 	score = -0.510066 * aggregate_height + 0.760666 * complete_lines * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
+	# else:
+	# 	score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
+
 	score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
 	return score
 
-def train_cal_reward(tetris, global_step, gameover = False):
+def train_cal_reward(tetris, gameover = False):
 	# https://codemyroad.wordpress.com/2013/04/14/tetris-ai-the-near-perfect-player/
 	# 这个函数还可以调整，按照论文，还可以修改为从启发式规则到游戏得分的过度
-	global s_last_score
+	# global s_last_score
+	global s_last_aggregate_height
+	global s_last_holes
+	global s_last_bumpiness
+	global is_master
 
 	if gameover:
 		train_reset_reward_status()
 		return -100, "game over"
 
 	complete_lines = tetris.last_erase_row()
-	# ——经过测试，下面的方法并不好，导致训练效果差很多，感觉上，缺少了指导，单纯得分为导向的评价，确实很难训练
+	# ——经过测试，下面的方法并不好，导致训练效果差很多，感觉上，缺少了指导，单纯得分为导向的评价，确实很难训练。在最后增加分数的奖励，训练多次之后，确实可以达到追求多层的效果
 	# if global_step > MASTER_TRAIN_COUNT: #对于训练次数达到一定程度的模型，仅仅使用消去作为奖励，这样是为了消去的更多
 	# 	return complete_lines * complete_lines, "complete_lines: %d" % complete_lines
 
@@ -466,17 +535,24 @@ def train_cal_reward(tetris, global_step, gameover = False):
 	aggregate_height_just_clear = complete_lines * 10 #刚刚消去的行数要记入当前操作评价的分数，但是不作为下一次分数的比较
 	bumpiness = sum([abs(column_height[i] - column_height[i+1]) for i in range(9)])
 
-	score = train_heuristic_score(aggregate_height + aggregate_height_just_clear, complete_lines, holes, bumpiness)
-	#score = -0.510066 * aggregate_height + 0.760666 * complete_lines - 0.35663 * holes - 0.184483 * bumpiness
+	reward = train_heuristic_score(aggregate_height + aggregate_height_just_clear - s_last_aggregate_height
+		, complete_lines
+		#, (holes - s_last_holes) if (holes > s_last_holes) else 0
+		, holes - s_last_holes
+		, bumpiness - s_last_bumpiness)
 
-	reward = score - s_last_score
+	# reward = score - s_last_score
 	info = "aggregate_height: %d, complete_lines: %d, holes: %d, bumpiness: %d" % (aggregate_height, complete_lines, holes, bumpiness)
 
-	# 为下一次操作记录评分时，消除行数为0，否则会影响下一次的计算
-	s_last_score = train_heuristic_score(aggregate_height, 0, holes, bumpiness)
+	# # 为下一次操作记录评分时，消除行数为0，否则会影响下一次的计算
+	# s_last_score = train_heuristic_score(aggregate_height, 0, holes, bumpiness)
+	s_last_aggregate_height = aggregate_height
+	s_last_holes = holes
+	s_last_bumpiness = bumpiness
 
-	if global_step > MASTER_TRAIN_COUNT: #对于训练次数达到一定程度的模型，增加这个奖励
+	if is_master:
 		reward += complete_lines * complete_lines
+
 	return reward, info
 
 if __name__ == '__main__':
