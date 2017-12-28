@@ -157,6 +157,7 @@ def train(tetris
 	, gamma = 0.6
 	, init_epsilon = 1
 	, min_epsilon = 0.01
+	, as_master = False
 	, printPerStep = 100
 	, upgateTargetAndSavePerStep = 1000
 	, ui = None):
@@ -175,7 +176,7 @@ def train(tetris
 	target_sess = tf.Session(graph = model)
 	restore_model(target_sess)
 	global_step = sess.run(model.get_tensor_by_name("step:0"))
-	is_master = global_step > 50000
+	is_master = as_master
 
 	if not is_new_model:
 		init_epsilon = float(init_epsilon) / 2
