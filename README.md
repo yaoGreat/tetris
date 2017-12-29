@@ -16,7 +16,7 @@ play.py 游戏UI，以及启动框架。
 
 包括优先清扫、启发式奖励函数、启发式奖励函数到分数的迁移等等
 
-https://docs.scipy.org/doc/numpy-1.13.0/reference/generated/numpy.random.choice.html
+http://cs231n.stanford.edu/reports/2016/pdfs/121_Report.pdf
 
 https://codemyroad.wordpress.com/2013/04/14/tetris-ai-the-near-perfect-player/
 
@@ -33,23 +33,16 @@ play.py -a
 play.py -A0
 
     使用ai进行无界面游戏，统计平均分数，可以用来评价ai
-
     -Ax, x为游戏的次数，如果输入0，则为10次
 
 play.py -t0 [-n [-g]] [-m] [-l0] [-u0]
 
     训练模型
-
     -tx, x为训练次数，输入0为10000次
-
     -n, 创建一个新模型训练（如果没有这个选项，则会自动加载之前保存的模型继续训练）
-
     -g, 与 -n 一起使用，从golden目录中加载一个模型作为新模型的初始值（可以从中间一个存档开始进行训练）
-
     -m, 使用master训练模式，用于在后期进行调整。master模式下“随机动作”与“奖励函数”的逻辑有所不同
-
     -lx, 指定学习率，如果不指定，则使用指数下降的学习率
-
     -ux, 训练过程显示ui，一般用来调试。x表示UI的帧间隔（毫秒）
 
 ## 我的训练步骤：
