@@ -206,7 +206,7 @@ class Tetris:
 			y = t[1]
 			if x < 0 or x > self.width() - 1 or y < 0 or y > self.height() - 1:
 				return True
-			if self.__tiles[y][x] > 0:
+			if self.__tiles[int(y)][int(x)] > 0:
 				return True
 		return False
 
